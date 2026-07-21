@@ -3,6 +3,7 @@
 pub mod acpi;
 pub mod cpuid;
 pub mod firmware;
+pub mod memory;
 pub mod msr;
 pub mod pci;
 pub mod procfs;
@@ -233,6 +234,7 @@ pub fn all() -> Vec<Box<dyn Probe>> {
         Box::new(acpi::AcpiProbe),
         Box::new(firmware::EfiProbe),
         Box::new(firmware::DmiProbe),
+        Box::new(memory::MemoryProbe),
     ]
 }
 

@@ -9,10 +9,11 @@ state separately instead of collapsing them into one ambiguous yes/no answer.
 The catalog covers AMD and common x86 features across instruction sets, speculation
 controls, Secure Memory Encryption (SME), Secure Encrypted Virtualization
 (SEV/SEV-ES/SEV-SNP), AMD-V/SVM and nested paging, CPPC/Core Performance Boost,
-topology, Instruction-Based Sampling, Platform QoS, AMD PCI devices, ACPI, UEFI,
-SMBIOS memory, and kernel vulnerability mitigations.
+topology, memory-channel capability, Instruction-Based Sampling, Platform QoS, AMD
+PCI devices and motherboard chipsets, ACPI, UEFI, SMBIOS memory, and kernel
+vulnerability mitigations.
 
-Nine independent probes provide traceable evidence:
+Ten independent probes provide traceable evidence:
 
 - **cpuid** reads standard and AMD extended leaves on every eligible logical CPU,
   pinned one CPU at a time. It reports asymmetric feature exposure, the processor
@@ -30,6 +31,13 @@ Nine independent probes provide traceable evidence:
   HPET, SRAT, WSMT, and TPM2.
 - **efi** reports UEFI boot, Secure Boot, Setup Mode, and ESRT.
 - **dmi** reports board/BIOS identity, memory ECC capability, and populated DIMMs.
+- **memory-topology** infers the maximum channels per CPU socket from the AMD product
+  and board class, and separately reports EDAC controller visibility. It does not claim
+  that the maximum channel count is populated or active when Linux exposes no telemetry.
+
+Chipset reporting prefers an exact chipset token from the DMI board name and corroborates
+it with AMD Promontory PCI functions. When only shared PCI IDs are available, it reports
+the chipset family and explicitly leaves the retail SKU unknown.
 
 Missing, inaccessible, malformed, or partially enumerated authoritative interfaces are
 reported as `unknown`. `absent` is only used when the relevant parent interface was

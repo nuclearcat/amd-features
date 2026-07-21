@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use amd_features::model::{Privilege, Status};
 use amd_features::probes::acpi::AcpiProbe;
 use amd_features::probes::firmware::{DmiProbe, EfiProbe};
+use amd_features::probes::memory::MemoryProbe;
 use amd_features::probes::msr::MsrProbe;
 use amd_features::probes::pci::PciProbe;
 use amd_features::probes::procfs::ProcfsProbe;
@@ -179,6 +180,41 @@ fn procfs_reports_asymmetric_flags_across_all_blocks() {
     assert_eq!(avx2.1.status, Status::Present);
     assert!(avx2.1.detail.as_deref().unwrap().contains("1/2 CPUs"));
     assert_eq!(status(&findings, "sse"), Status::Present);
+}
+
+#[test]
+fn memory_channels_are_inferred_but_active_state_stays_explicit() {
+    let cpuinfo = "processor : 0\nvendor_id : AuthenticAMD\ncpu family : 26\nmodel name : AMD Ryzen 7 9800X3D 8-Core Processor\nflags : sse\n";
+    let reader = MemoryReader::default()
+        .file("/proc/cpuinfo", cpuinfo)
+        .file("/sys/class/dmi/id/board_name", "PRO X870-P WIFI")
+        .dir("/sys/devices/system/edac/mc", &[]);
+    let findings = MemoryProbe.detect(&context(reader)).unwrap();
+    let channels = findings
+        .iter()
+        .find(|(id, _)| *id == "memory_channels")
+        .unwrap();
+    assert_eq!(channels.1.status, Status::Present);
+    let detail = channels.1.detail.as_deref().unwrap();
+    assert!(detail.contains("2 memory channel(s) per CPU socket"));
+    assert!(detail.contains("active-channel telemetry unavailable"));
+}
+
+#[test]
+fn chipset_combines_dmi_name_with_promontory_pci_evidence() {
+    let path = "/sys/bus/pci/devices/0000:01:00.0";
+    let reader = MemoryReader::default()
+        .dir("/sys/bus/pci/devices", &["0000:01:00.0"])
+        .file(&format!("{path}/vendor"), "0x1022")
+        .file(&format!("{path}/device"), "0x43fc")
+        .file(&format!("{path}/class"), "0x0c0330")
+        .file("/sys/class/dmi/id/board_name", "PRO X870-P WIFI");
+    let findings = PciProbe.detect(&context(reader)).unwrap();
+    let chipset = findings.iter().find(|(id, _)| *id == "chipset").unwrap();
+    assert_eq!(chipset.1.status, Status::Present);
+    let detail = chipset.1.detail.as_deref().unwrap();
+    assert!(detail.contains("AMD X870 chipset"));
+    assert!(detail.contains("1022:43fc"));
 }
 
 #[test]
