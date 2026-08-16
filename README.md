@@ -17,7 +17,9 @@ Ten independent probes provide traceable evidence:
 
 - **cpuid** reads standard and AMD extended leaves on every eligible logical CPU,
   pinned one CPU at a time. It reports asymmetric feature exposure, the processor
-  signature and brand, microcode revision, and a conservative family/model lookup.
+  signature and brand, microcode revision, and a family/model lookup. Shared
+  model ranges (for example Genoa vs Storm Peak) are disambiguated from the
+  processor brand string; otherwise the report keeps a slash-separated name.
 - **procfs** cross-checks CPUID against every matching `/proc/cpuinfo` flag.
 - **linux-sysfs** reports SMT and KVM state, `amd_pstate`, boost, CPU idle, AMD
   energy/hwmon drivers, TPM, resctrl/PQoS, Bluetooth, and IPMI.
@@ -82,7 +84,7 @@ cgroups.
 ```text
 model      shared statuses, detections, categories, and feature metadata
 catalog    static registry of AMD and common x86 features
-cpu_db     conservative AMD family/model classification
+cpu_db     AMD family/model classification, with brand disambiguation for shared ranges
 probes/    one read-only module per detection mechanism
 report     aggregation plus text and JSON rendering
 ```

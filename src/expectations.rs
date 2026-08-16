@@ -182,32 +182,38 @@ struct Profile {
 }
 
 fn profile(family: u32, model: u32) -> Option<Profile> {
-    let profile = match family {
-        0x17 => Profile {
+    use crate::cpu_db::{zen_generation, ZenGeneration};
+    let profile = match zen_generation(family, model)? {
+        ZenGeneration::Zen | ZenGeneration::Zen2 => Profile {
             name: "AMD Zen / Zen 2",
             avx512: false,
             zen5: false,
             modern: false,
         },
-        0x19 if matches!(model, 0x60..=0x7f | 0xa0..=0xaf) => Profile {
-            name: "AMD Zen 4",
-            avx512: true,
-            zen5: false,
-            modern: true,
-        },
-        0x19 => Profile {
+        ZenGeneration::Zen3 => Profile {
             name: "AMD Zen 3",
             avx512: false,
             zen5: false,
             modern: true,
         },
-        0x1a => Profile {
+        ZenGeneration::Zen4 => Profile {
+            name: "AMD Zen 4",
+            avx512: true,
+            zen5: false,
+            modern: true,
+        },
+        ZenGeneration::Zen5 => Profile {
             name: "AMD Zen 5",
             avx512: true,
             zen5: true,
             modern: true,
         },
-        _ => return None,
+        ZenGeneration::Zen6 => Profile {
+            name: "AMD Zen 6",
+            avx512: true,
+            zen5: false,
+            modern: true,
+        },
     };
     Some(profile)
 }
@@ -273,5 +279,25 @@ mod tests {
     fn present_features_never_raise_attention() {
         let expectation = for_feature(Some(&zen5("AMD Ryzen")), "avx512f").unwrap();
         assert_eq!(expectation.attention(Status::Present), None);
+    }
+
+    #[test]
+    fn genoa_avx512_foundation_is_expected() {
+        let genoa = Identity {
+            vendor: "AuthenticAMD".into(),
+            brand: "AMD EPYC 9654 96-Core Processor".into(),
+            family: 0x19,
+            model: 0x11,
+            stepping: 1,
+            model_info: None,
+            logical_cpus: 192,
+            hybrid: false,
+            p_cores: 96,
+            e_cores: 0,
+            microcode: None,
+        };
+        let expectation = for_feature(Some(&genoa), "avx512f").unwrap();
+        assert_eq!(expectation.level, ExpectationLevel::Expected);
+        assert_eq!(expectation.profile, "AMD Zen 4");
     }
 }

@@ -441,7 +441,12 @@ fn build_identity(cores: &[CoreScan], ctx: &Context) -> Identity {
         family: first.family,
         model: first.model,
         stepping: first.stepping,
-        model_info: cpu_db::lookup(&first.vendor, first.family, first.model),
+        model_info: cpu_db::lookup_with_brand(
+            &first.vendor,
+            first.family,
+            first.model,
+            &first.brand,
+        ),
         logical_cpus: cores.len(),
         hybrid: false,
         p_cores: physical_core_count(cores),
