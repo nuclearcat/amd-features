@@ -1,15 +1,19 @@
 //! AMD PCI inventory probe.
 
 use crate::model::{Detection, Status};
+use crate::probes::gpu::{self, GpuPci};
 use crate::probes::{unavailable, Context, Probe, ProbeResult};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const SRC: &str = "pci";
 const AMD: u32 = 0x1022;
 const ATI: u32 = 0x1002;
-const PCI_FEATURES: &[&str] = &[
-    "igpu", "npu", "psp", "chipset", "ethernet", "audio", "smbus", "usb", "sata", "nvme",
-];
+
+fn all_feature_ids() -> Vec<&'static str> {
+    let mut ids = gpu::FEATURES.to_vec();
+    ids.extend(RULES.iter().map(|rule| rule.feature));
+    ids
+}
 
 pub struct PciProbe;
 impl Probe for PciProbe {
@@ -17,14 +21,14 @@ impl Probe for PciProbe {
         SRC
     }
     fn feature_ids(&self) -> Vec<&'static str> {
-        PCI_FEATURES.to_vec()
+        all_feature_ids()
     }
     fn detect(&self, ctx: &Context) -> ProbeResult {
         let (devices, complete) = match scan_amd_devices(ctx) {
             Ok(value) => value,
-            Err(reason) => return Ok(unavailable(SRC, PCI_FEATURES, reason)),
+            Err(reason) => return Ok(unavailable(SRC, &all_feature_ids(), reason)),
         };
-        Ok(RULES
+        let mut out: Vec<_> = RULES
             .iter()
             .map(|rule| {
                 let detection = if rule.feature == "chipset" {
@@ -34,11 +38,25 @@ impl Probe for PciProbe {
                 };
                 (rule.feature, detection)
             })
-            .collect())
+            .collect();
+        let gpus: Vec<GpuPci> = devices
+            .iter()
+            .map(|device| GpuPci {
+                path: device.path.clone(),
+                vendor: device.vendor,
+                device: device.device,
+                class_hi: device.class_hi,
+                driver: device.driver.clone(),
+                driver_known: device.driver_known,
+            })
+            .collect();
+        out.extend(gpu::findings(ctx, &gpus, complete));
+        Ok(out)
     }
 }
 
 struct PciDevice {
+    path: PathBuf,
     vendor: u16,
     device: u16,
     class_hi: u8,
@@ -55,8 +73,7 @@ struct Rule {
 
 #[rustfmt::skip]
 const RULES: &[Rule] = &[
-    Rule { feature:"igpu",     class:Some((0x03,0xff)), devices:&[], drivers:&["amdgpu"] },
-    Rule { feature:"npu",      class:Some((0x12,0xff)), devices:&[0x1502,0x17f0], drivers:&["amdxdna"] },
+    Rule { feature:"npu",      class:None, devices:&[0x1502,0x17f0,0x17f1], drivers:&["amdxdna"] },
     Rule { feature:"psp",      class:Some((0x10,0xff)), devices:&[0x1456,0x1486,0x15df,0x1649], drivers:&["ccp"] },
     Rule { feature:"chipset",  class:Some((0x06,0xff)), devices:&[], drivers:&["pcieport"] },
     Rule { feature:"ethernet", class:Some((0x02,0x00)), devices:&[], drivers:&["amd-xgbe", "xgbe"] },
@@ -241,6 +258,7 @@ fn scan_amd_devices(ctx: &Context) -> Result<(Vec<PciDevice>, bool), String> {
             }
         };
         devices.push(PciDevice {
+            path,
             vendor: vendor as u16,
             device,
             class_hi: ((class >> 16) & 0xff) as u8,
@@ -263,6 +281,7 @@ mod tests {
     use super::*;
     fn dev(class: u8, sub: u8, driver: Option<&str>) -> PciDevice {
         PciDevice {
+            path: PathBuf::new(),
             vendor: AMD as u16,
             device: 1,
             class_hi: class,
@@ -275,8 +294,8 @@ mod tests {
         RULES.iter().find(|rule| rule.feature == id).unwrap()
     }
     #[test]
-    fn display_class_matches_igpu() {
-        assert!(matches_rule(&dev(3, 0, None), rule("igpu")));
+    fn display_class_does_not_claim_npu() {
+        assert!(!matches_rule(&dev(3, 0, None), rule("npu")));
     }
     #[test]
     fn network_subclasses_do_not_mix() {

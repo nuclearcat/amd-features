@@ -200,6 +200,24 @@ enum EccState {
     Unknown,
 }
 
+pub(crate) fn dimm_data_rates(ctx: &Context) -> Vec<u32> {
+    let Ok(buf) = ctx.reader.read(Path::new("/sys/firmware/dmi/tables/DMI")) else {
+        return Vec::new();
+    };
+    let Ok(structures) = parse_structures(&buf) else {
+        return Vec::new();
+    };
+    structures
+        .iter()
+        .filter(|s| s.stype == 17 && s.formatted.len() >= 0x17)
+        .filter_map(|s| {
+            dimm_summary(s)?;
+            let speed = s.word(0x15).unwrap_or(0);
+            (speed != 0 && speed != 0xffff).then_some(u32::from(speed))
+        })
+        .collect()
+}
+
 fn smbios_memory(ctx: &Context) -> Findings {
     let buf = match ctx.reader.read(Path::new("/sys/firmware/dmi/tables/DMI")) {
         Ok(buf) => buf,

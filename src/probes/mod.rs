@@ -3,11 +3,13 @@
 pub mod acpi;
 pub mod cpuid;
 pub mod firmware;
+pub mod gpu;
 pub mod memory;
 pub mod msr;
 pub mod pci;
 pub mod procfs;
 pub mod sysfs;
+pub mod telemetry;
 pub mod vulns;
 
 use std::fmt;

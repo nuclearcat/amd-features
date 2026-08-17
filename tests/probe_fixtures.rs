@@ -41,6 +41,14 @@ impl MemoryReader {
             .insert(path.into(), vec![Err(io::ErrorKind::PermissionDenied)]);
         self
     }
+    fn link(mut self, path: &str, target: &str) -> Self {
+        self.links.insert(path.into(), target.into());
+        self
+    }
+    fn device(mut self, path: &str) -> Self {
+        self.openable.insert(path.into());
+        self
+    }
 }
 
 impl SystemReader for MemoryReader {
@@ -160,12 +168,15 @@ fn partial_pci_enumeration_cannot_prove_absence() {
         ))
         .unwrap();
     assert_eq!(status(&partial, "igpu"), Status::Unknown);
+    assert_eq!(status(&partial, "dgpu"), Status::Unknown);
     let empty = PciProbe
         .detect(&context(
             MemoryReader::default().dir("/sys/bus/pci/devices", &[]),
         ))
         .unwrap();
     assert_eq!(status(&empty, "igpu"), Status::Absent);
+    assert_eq!(status(&empty, "dgpu"), Status::Absent);
+    assert_eq!(status(&empty, "rebar"), Status::Absent);
 }
 
 #[test]
@@ -316,4 +327,287 @@ fn module_loading_requires_explicit_root_opt_in_and_runs_once() {
     MsrProbe.detect(&root_opt).unwrap();
     MsrProbe.detect(&root_opt).unwrap();
     assert_eq!(*msr.loads.lock().unwrap(), 1);
+}
+
+fn pci_gpu(reader: MemoryReader, bdf: &str, device: &str, class: &str) -> MemoryReader {
+    let path = format!("/sys/bus/pci/devices/{bdf}");
+    reader
+        .file(&format!("{path}/vendor"), "0x1002")
+        .file(&format!("{path}/device"), device)
+        .file(&format!("{path}/class"), class)
+        .link(&format!("{path}/driver"), "/sys/bus/pci/drivers/amdgpu")
+}
+
+#[test]
+fn discrete_gpu_is_not_reported_as_integrated() {
+    let path = "/sys/bus/pci/devices/0000:03:00.0";
+    let reader = pci_gpu(
+        MemoryReader::default().dir("/sys/bus/pci/devices", &["0000:03:00.0"]),
+        "0000:03:00.0",
+        "0x744c",
+        "0x030000",
+    )
+    .file(&format!("{path}/mem_info_vram_total"), "17179869184")
+    .file(&format!("{path}/mem_info_vis_vram_total"), "17179869184")
+    .file(&format!("{path}/mem_info_gtt_total"), "4294967296")
+    .file(&format!("{path}/current_link_speed"), "16.0 GT/s PCIe")
+    .file(&format!("{path}/current_link_width"), "16")
+    .file(&format!("{path}/board_info"), "type : cem")
+    .file(
+        "/sys/kernel/debug/dri/0000:03:00.0/amdgpu_firmware_info",
+        "VCN feature version: 0, fw version: 0x0511001b\n",
+    )
+    .device("/dev/kfd")
+    .dir("/sys/class/kfd/kfd/topology/nodes", &["1"])
+    .file(
+        "/sys/class/kfd/kfd/topology/nodes/1/properties",
+        "cpu_cores_count 0\nsimd_count 96\ndevice_id 29772\ngfx_target_version 110000\nmax_engine_clk_fcompute 2500\nlocation_id 768\n",
+    );
+    let findings = PciProbe.detect(&context(reader)).unwrap();
+    assert_eq!(status(&findings, "dgpu"), Status::Enabled);
+    assert_eq!(status(&findings, "igpu"), Status::Absent);
+    assert_eq!(status(&findings, "rebar"), Status::Enabled);
+    assert_eq!(status(&findings, "vcn"), Status::Enabled);
+    assert_eq!(status(&findings, "rocm"), Status::Enabled);
+    let dgpu = findings.iter().find(|(id, _)| *id == "dgpu").unwrap();
+    let detail = dgpu.1.detail.as_deref().unwrap();
+    assert!(detail.contains("discrete"));
+    assert!(detail.contains("16 GiB"));
+    assert!(detail.contains("PCIe 16.0 GT/s PCIe x16"));
+    let vram = findings.iter().find(|(id, _)| *id == "gpu_vram").unwrap();
+    assert!(vram
+        .1
+        .detail
+        .as_deref()
+        .unwrap()
+        .contains("dGPU 16 GiB VRAM"));
+    let rebar = findings.iter().find(|(id, _)| *id == "rebar").unwrap();
+    assert!(rebar.1.detail.as_deref().unwrap().contains("ReBAR/SAM"));
+}
+
+#[test]
+fn raphael_igpu_is_not_a_discrete_card() {
+    let path = "/sys/bus/pci/devices/0000:0c:00.0";
+    let reader = pci_gpu(
+        MemoryReader::default().dir("/sys/bus/pci/devices", &["0000:0c:00.0"]),
+        "0000:0c:00.0",
+        "0x164e",
+        "0x030000",
+    )
+    .file(&format!("{path}/mem_info_vram_total"), "536870912")
+    .file(&format!("{path}/mem_info_vis_vram_total"), "536870912")
+    .file(&format!("{path}/mem_info_gtt_total"), "17179869184")
+    .file(&format!("{path}/vbios_version"), "113-RAPHAEL-001")
+    .file(
+        "/sys/kernel/debug/dri/0000:0c:00.0/amdgpu_firmware_info",
+        "VCN feature version: 0\nJPEG feature version: 0\n",
+    );
+    let findings = PciProbe.detect(&context(reader)).unwrap();
+    assert_eq!(status(&findings, "igpu"), Status::Enabled);
+    assert_eq!(status(&findings, "dgpu"), Status::Absent);
+    assert_eq!(status(&findings, "rebar"), Status::Absent);
+    assert_eq!(status(&findings, "vcn"), Status::Enabled);
+    let igpu = findings.iter().find(|(id, _)| *id == "igpu").unwrap();
+    let detail = igpu.1.detail.as_deref().unwrap();
+    assert!(detail.contains("Raphael"));
+    assert!(detail.contains("integrated"));
+    assert!(detail.contains("VBIOS"));
+    let vram = findings.iter().find(|(id, _)| *id == "gpu_vram").unwrap();
+    assert!(vram.1.detail.as_deref().unwrap().contains("iGPU"));
+}
+
+#[test]
+fn rebar_disabled_when_only_256mib_is_visible() {
+    let path = "/sys/bus/pci/devices/0000:03:00.0";
+    let reader = pci_gpu(
+        MemoryReader::default().dir("/sys/bus/pci/devices", &["0000:03:00.0"]),
+        "0000:03:00.0",
+        "0x744c",
+        "0x030000",
+    )
+    .file(&format!("{path}/mem_info_vram_total"), "17179869184")
+    .file(&format!("{path}/mem_info_vis_vram_total"), "268435456")
+    .file(&format!("{path}/board_info"), "type : cem");
+    let findings = PciProbe.detect(&context(reader)).unwrap();
+    assert_eq!(status(&findings, "dgpu"), Status::Enabled);
+    assert_eq!(status(&findings, "rebar"), Status::Disabled);
+    let rebar = findings.iter().find(|(id, _)| *id == "rebar").unwrap();
+    assert!(rebar
+        .1
+        .detail
+        .as_deref()
+        .unwrap()
+        .contains("256 MiB aperture"));
+}
+
+#[test]
+fn kfd_cpu_cores_classify_an_unknown_id_as_igpu() {
+    let reader = pci_gpu(
+        MemoryReader::default().dir("/sys/bus/pci/devices", &["0000:c1:00.0"]),
+        "0000:c1:00.0",
+        "0xabcd",
+        "0x030000",
+    )
+    .dir("/sys/class/kfd/kfd/topology/nodes", &["1"])
+    .file(
+        "/sys/class/kfd/kfd/topology/nodes/1/properties",
+        "cpu_cores_count 12\nsimd_count 16\ndevice_id 43981\ngfx_target_version 110500\nlocation_id 49408\n",
+    );
+    let findings = PciProbe.detect(&context(reader)).unwrap();
+    assert_eq!(status(&findings, "igpu"), Status::Enabled);
+    assert_eq!(status(&findings, "dgpu"), Status::Absent);
+    let igpu = findings.iter().find(|(id, _)| *id == "igpu").unwrap();
+    assert!(igpu.1.detail.as_deref().unwrap().contains("gfx1150"));
+}
+
+fn type17_dimm(size_mb: u16, mem_type: u8, speed: u16) -> Vec<u8> {
+    let mut formatted = vec![0; 0x18];
+    formatted[0] = 17;
+    formatted[1] = 0x18;
+    formatted[0x0c..0x0e].copy_from_slice(&size_mb.to_le_bytes());
+    formatted[0x12] = mem_type;
+    formatted[0x15..0x17].copy_from_slice(&speed.to_le_bytes());
+    let mut buf = formatted;
+    buf.extend_from_slice(&[0, 0, 127, 4, 0, 0, 0, 0]);
+    buf
+}
+
+#[test]
+fn boost_clocks_show_asymmetric_ccd_range() {
+    let reader = MemoryReader::default()
+        .dir("/sys/devices/system/cpu", &["cpu0", "cpu8"])
+        .file(
+            "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq",
+            "400000",
+        )
+        .file(
+            "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq",
+            "5750000",
+        )
+        .file(
+            "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq",
+            "5500000",
+        )
+        .file(
+            "/sys/devices/system/cpu/cpu8/cpufreq/cpuinfo_min_freq",
+            "400000",
+        )
+        .file(
+            "/sys/devices/system/cpu/cpu8/cpufreq/cpuinfo_max_freq",
+            "4200000",
+        )
+        .file("/sys/devices/system/cpu/cpufreq/boost", "1");
+    let findings = SysfsProbe.detect(&context(reader)).unwrap();
+    assert_eq!(status(&findings, "cpu_freq"), Status::Present);
+    let detail = findings
+        .iter()
+        .find(|(id, _)| *id == "cpu_freq")
+        .unwrap()
+        .1
+        .detail
+        .as_deref()
+        .unwrap();
+    assert!(detail.contains("asymmetric CCDs"));
+    assert!(detail.contains("4200 MHz"));
+    assert!(detail.contains("5750 MHz"));
+    assert!(detail.contains("boost=on"));
+}
+
+#[test]
+fn package_power_maps_rapl_limits_to_tdp_and_ppt() {
+    let path = "/sys/class/powercap/intel-rapl:0";
+    let reader = MemoryReader::default()
+        .dir("/sys/class/powercap", &["intel-rapl:0"])
+        .file(&format!("{path}/name"), "package-0")
+        .file(&format!("{path}/constraint_0_name"), "long_term")
+        .file(&format!("{path}/constraint_0_power_limit_uw"), "142000000")
+        .file(&format!("{path}/constraint_1_name"), "short_term")
+        .file(&format!("{path}/constraint_1_power_limit_uw"), "230000000")
+        .dir("/sys/class/hwmon", &["hwmon0"])
+        .file("/sys/class/hwmon/hwmon0/name", "zenpower")
+        .file("/sys/class/hwmon/hwmon0/power1_label", "PPT")
+        .file("/sys/class/hwmon/hwmon0/power1_input", "61200000");
+    let findings = SysfsProbe.detect(&context(reader)).unwrap();
+    assert_eq!(status(&findings, "package_power"), Status::Present);
+    let detail = findings
+        .iter()
+        .find(|(id, _)| *id == "package_power")
+        .unwrap()
+        .1
+        .detail
+        .as_deref()
+        .unwrap();
+    assert!(detail.contains("TDP/long_term 142 W"));
+    assert!(detail.contains("PPT/short_term 230 W"));
+    assert!(detail.contains("hwmon PPT 61.2 W"));
+}
+
+#[test]
+fn vcache_detects_asymmetric_96mib_ccd() {
+    let reader = MemoryReader::default()
+        .file(
+            "/proc/cpuinfo",
+            "model name : AMD Ryzen 9 7950X3D 16-Core Processor\n",
+        )
+        .dir("/sys/devices/system/cpu", &["cpu0", "cpu8"])
+        .dir("/sys/devices/system/cpu/cpu0/cache", &["index3"])
+        .file("/sys/devices/system/cpu/cpu0/cache/index3/level", "3")
+        .file("/sys/devices/system/cpu/cpu0/cache/index3/size", "98304K")
+        .file(
+            "/sys/devices/system/cpu/cpu0/cache/index3/shared_cpu_list",
+            "0-7",
+        )
+        .dir("/sys/devices/system/cpu/cpu8/cache", &["index3"])
+        .file("/sys/devices/system/cpu/cpu8/cache/index3/level", "3")
+        .file("/sys/devices/system/cpu/cpu8/cache/index3/size", "32768K")
+        .file(
+            "/sys/devices/system/cpu/cpu8/cache/index3/shared_cpu_list",
+            "8-15",
+        )
+        .dir("/sys/bus/platform/drivers/amd_x3d_vcache", &["AMDI0101:00"])
+        .file(
+            "/sys/bus/platform/drivers/amd_x3d_vcache/AMDI0101:00/amd_x3d_mode",
+            "frequency",
+        );
+    let findings = SysfsProbe.detect(&context(reader)).unwrap();
+    assert_eq!(status(&findings, "vcache"), Status::Enabled);
+    let detail = findings
+        .iter()
+        .find(|(id, _)| *id == "vcache")
+        .unwrap()
+        .1
+        .detail
+        .as_deref()
+        .unwrap();
+    assert!(detail.contains("96 MiB"));
+    assert!(detail.contains("32 MiB"));
+    assert!(detail.contains("asymmetric CCDs"));
+    assert!(detail.contains("amd_x3d_vcache mode=frequency"));
+}
+
+#[test]
+fn fabric_shows_fclk_and_dimm_data_rate() {
+    let mut dmi = type17_dimm(16384, 0x22, 6400);
+    dmi.extend_from_slice(&[127, 4, 0, 0, 0, 0]);
+    let reader = MemoryReader::default()
+        .dir("/sys/class/hwmon", &["hwmon1"])
+        .file("/sys/class/hwmon/hwmon1/name", "zenpower")
+        .file("/sys/class/hwmon/hwmon1/freq1_label", "FCLK")
+        .file("/sys/class/hwmon/hwmon1/freq1_input", "2000000000")
+        .file("/sys/class/hwmon/hwmon1/freq2_label", "UCLK")
+        .file("/sys/class/hwmon/hwmon1/freq2_input", "3200000000")
+        .file("/sys/firmware/dmi/tables/DMI", dmi);
+    let findings = SysfsProbe.detect(&context(reader)).unwrap();
+    assert_eq!(status(&findings, "fabric"), Status::Present);
+    let detail = findings
+        .iter()
+        .find(|(id, _)| *id == "fabric")
+        .unwrap()
+        .1
+        .detail
+        .as_deref()
+        .unwrap();
+    assert!(detail.contains("FCLK 2000 MHz"));
+    assert!(detail.contains("UCLK 3200 MHz"));
+    assert!(detail.contains("6400 MT/s"));
 }

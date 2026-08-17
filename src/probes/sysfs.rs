@@ -31,7 +31,9 @@ impl Probe for SysfsProbe {
         SRC
     }
     fn feature_ids(&self) -> Vec<&'static str> {
-        FEATURES.to_vec()
+        let mut ids = FEATURES.to_vec();
+        ids.extend_from_slice(crate::probes::telemetry::FEATURES);
+        ids
     }
 
     fn detect(&self, ctx: &Context) -> ProbeResult {
@@ -45,6 +47,7 @@ impl Probe for SysfsProbe {
         detect_hwmon(ctx, &mut out);
         detect_resctrl(ctx, &mut out);
         detect_nodes(ctx, &mut out);
+        out.extend(crate::probes::telemetry::findings(ctx));
         Ok(out)
     }
 }
