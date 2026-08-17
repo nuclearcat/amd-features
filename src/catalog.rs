@@ -185,6 +185,7 @@ pub const FEATURES: &[FeatureDef] = &[
     n("hmat", "HMAT / Memory Tiering", Platform, "Heterogeneous memory attributes"),
     v("memory_ecc", "Memory ECC", Platform, "Error-correcting memory"),
     v("memory_dimms", "Installed Memory", Platform, "Populated SMBIOS memory devices"),
+    v("memory_xmp", "XMP / EXPO", Platform, "DIMM overclock profiles in SPD and firmware-configured data rate"),
 
     // Firmware
     n("msr", "MSR access", Firmware, "/dev/cpu/*/msr readable"),

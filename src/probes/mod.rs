@@ -8,6 +8,7 @@ pub mod memory;
 pub mod msr;
 pub mod pci;
 pub mod procfs;
+pub mod spd;
 pub mod sysfs;
 pub mod telemetry;
 pub mod vulns;

@@ -22,8 +22,8 @@ Ten independent probes provide traceable evidence:
   processor brand string; otherwise the report keeps a slash-separated name.
 - **procfs** cross-checks CPUID against every matching `/proc/cpuinfo` flag.
 - **linux-sysfs** reports SMT and KVM state, `amd_pstate`, boost clocks, PPT/TDP,
-  3D V-Cache, Infinity Fabric/memory data rate, CPU idle, AMD energy/hwmon drivers,
-  TPM, resctrl/PQoS, Bluetooth, and IPMI.
+  3D V-Cache, Infinity Fabric/memory data rate, XMP/EXPO profiles from SPD EEPROM,
+  CPU idle, AMD energy/hwmon drivers, TPM, resctrl/PQoS, Bluetooth, and IPMI.
 - **linux-vuln** preserves the kernel's mitigation text from
   `/sys/devices/system/cpu/vulnerabilities`.
 - **msr** performs read-only AMD MSR queries for VM_CR, SYSCFG, SEV status, HWCR,
@@ -34,7 +34,8 @@ Ten independent probes provide traceable evidence:
 - **acpi** detects AMD-Vi through IVRS/IOMMU state plus LPIT, NFIT, CEDT, HMAT,
   HPET, SRAT, WSMT, and TPM2.
 - **efi** reports UEFI boot, Secure Boot, Setup Mode, and ESRT.
-- **dmi** reports board/BIOS identity, memory ECC capability, and populated DIMMs.
+- **dmi** reports board/BIOS identity, memory ECC capability, and populated DIMMs
+  with rated vs firmware-configured operating speed.
 - **memory-topology** infers the maximum channels per CPU socket from the AMD product
   and board class, and separately reports EDAC controller visibility. It does not claim
   that the maximum channel count is populated or active when Linux exposes no telemetry.

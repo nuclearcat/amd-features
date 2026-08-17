@@ -461,12 +461,20 @@ fn kfd_cpu_cores_classify_an_unknown_id_as_igpu() {
 }
 
 fn type17_dimm(size_mb: u16, mem_type: u8, speed: u16) -> Vec<u8> {
-    let mut formatted = vec![0; 0x18];
+    type17_dimm_speeds(size_mb, mem_type, speed, None)
+}
+
+fn type17_dimm_speeds(size_mb: u16, mem_type: u8, rated: u16, configured: Option<u16>) -> Vec<u8> {
+    let len = if configured.is_some() { 0x22 } else { 0x18 };
+    let mut formatted = vec![0; len];
     formatted[0] = 17;
-    formatted[1] = 0x18;
+    formatted[1] = len as u8;
     formatted[0x0c..0x0e].copy_from_slice(&size_mb.to_le_bytes());
     formatted[0x12] = mem_type;
-    formatted[0x15..0x17].copy_from_slice(&speed.to_le_bytes());
+    formatted[0x15..0x17].copy_from_slice(&rated.to_le_bytes());
+    if let Some(configured) = configured {
+        formatted[0x20..0x22].copy_from_slice(&configured.to_le_bytes());
+    }
     let mut buf = formatted;
     buf.extend_from_slice(&[0, 0, 127, 4, 0, 0, 0, 0]);
     buf
@@ -610,4 +618,84 @@ fn fabric_shows_fclk_and_dimm_data_rate() {
     assert!(detail.contains("FCLK 2000 MHz"));
     assert!(detail.contains("UCLK 3200 MHz"));
     assert!(detail.contains("6400 MT/s"));
+}
+
+#[test]
+fn installed_memory_shows_operating_speed() {
+    let findings = DmiProbe
+        .detect(&context(MemoryReader::default().file(
+            "/sys/firmware/dmi/tables/DMI",
+            type17_dimm_speeds(16384, 0x22, 6400, Some(6000)),
+        )))
+        .unwrap();
+    assert_eq!(status(&findings, "memory_dimms"), Status::Present);
+    let detail = findings
+        .iter()
+        .find(|(id, _)| *id == "memory_dimms")
+        .unwrap()
+        .1
+        .detail
+        .as_deref()
+        .unwrap();
+    assert!(detail.contains("DDR5-6400"));
+    assert!(detail.contains("operating 6000 MT/s"));
+}
+
+fn ddr5_expo_spd(jedec_ps: u16, profile_ps: u16) -> Vec<u8> {
+    let mut spd = vec![0; 1024];
+    spd[2] = 0x12;
+    spd[20..22].copy_from_slice(&jedec_ps.to_le_bytes());
+    spd[0x280..0x284].copy_from_slice(b"EXPO");
+    spd[0x285] = 0x01;
+    spd[0x280 + 0x0a + 4..0x280 + 0x0a + 6].copy_from_slice(&profile_ps.to_le_bytes());
+    spd
+}
+
+#[test]
+fn xmp_expo_matches_firmware_operating_speed() {
+    let reader = MemoryReader::default()
+        .dir("/sys/bus/i2c/devices", &["1-0050"])
+        .file(
+            "/sys/bus/i2c/devices/1-0050/eeprom",
+            ddr5_expo_spd(417, 333),
+        )
+        .file(
+            "/sys/firmware/dmi/tables/DMI",
+            type17_dimm_speeds(16384, 0x22, 6400, Some(6000)),
+        );
+    let findings = SysfsProbe.detect(&context(reader)).unwrap();
+    assert_eq!(status(&findings, "memory_xmp"), Status::Enabled);
+    let detail = findings
+        .iter()
+        .find(|(id, _)| *id == "memory_xmp")
+        .unwrap()
+        .1
+        .detail
+        .as_deref()
+        .unwrap();
+    assert!(detail.contains("JEDEC 4800"));
+    assert!(detail.contains("EXPO1 6000 MT/s"));
+    assert!(detail.contains("operating 6000 MT/s"));
+    assert!(detail.contains("matches XMP/EXPO"));
+}
+
+#[test]
+fn jedec_only_spd_is_absent_xmp() {
+    let mut spd = vec![0; 1024];
+    spd[2] = 0x12;
+    spd[20..22].copy_from_slice(&417u16.to_le_bytes());
+    let reader = MemoryReader::default()
+        .dir("/sys/bus/i2c/devices", &["1-0050"])
+        .file("/sys/bus/i2c/devices/1-0050/eeprom", spd);
+    let findings = SysfsProbe.detect(&context(reader)).unwrap();
+    assert_eq!(status(&findings, "memory_xmp"), Status::Absent);
+    let detail = findings
+        .iter()
+        .find(|(id, _)| *id == "memory_xmp")
+        .unwrap()
+        .1
+        .detail
+        .as_deref()
+        .unwrap();
+    assert!(detail.contains("JEDEC 4800"));
 }

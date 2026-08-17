@@ -200,7 +200,18 @@ enum EccState {
     Unknown,
 }
 
-pub(crate) fn dimm_data_rates(ctx: &Context) -> Vec<u32> {
+pub(crate) struct DimmSpeed {
+    pub rated_mts: Option<u32>,
+    pub configured_mts: Option<u32>,
+}
+
+impl DimmSpeed {
+    pub(crate) fn operating_mts(self) -> Option<u32> {
+        self.configured_mts.or(self.rated_mts)
+    }
+}
+
+pub(crate) fn dimm_speeds(ctx: &Context) -> Vec<DimmSpeed> {
     let Ok(buf) = ctx.reader.read(Path::new("/sys/firmware/dmi/tables/DMI")) else {
         return Vec::new();
     };
@@ -211,10 +222,19 @@ pub(crate) fn dimm_data_rates(ctx: &Context) -> Vec<u32> {
         .iter()
         .filter(|s| s.stype == 17 && s.formatted.len() >= 0x17)
         .filter_map(|s| {
-            dimm_summary(s)?;
-            let speed = s.word(0x15).unwrap_or(0);
-            (speed != 0 && speed != 0xffff).then_some(u32::from(speed))
+            parse_dimm(s)?;
+            Some(DimmSpeed {
+                rated_mts: speed_word(s, 0x15),
+                configured_mts: speed_word(s, 0x20),
+            })
         })
+        .collect()
+}
+
+pub(crate) fn dimm_data_rates(ctx: &Context) -> Vec<u32> {
+    dimm_speeds(ctx)
+        .into_iter()
+        .filter_map(DimmSpeed::operating_mts)
         .collect()
 }
 
@@ -308,7 +328,7 @@ fn ecc_state(value: u8) -> EccState {
     }
 }
 
-fn dimm_summary(s: &Structure<'_>) -> Option<String> {
+fn parse_dimm(s: &Structure<'_>) -> Option<(String, &'static str)> {
     let size_raw = s.word(0x0c)?;
     if size_raw == 0 || size_raw == 0xffff {
         return None;
@@ -325,13 +345,28 @@ fn dimm_summary(s: &Structure<'_>) -> Option<String> {
     } else {
         format!("{mb} MB")
     };
-    let memory_type = mem_type(s.byte(0x12));
-    let speed = s.word(0x15).unwrap_or(0);
-    Some(if speed != 0 && speed != 0xffff {
-        format!("{size} {memory_type}-{speed}")
-    } else {
-        format!("{size} {memory_type}")
+    Some((size, mem_type(s.byte(0x12))))
+}
+
+fn dimm_summary(s: &Structure<'_>) -> Option<String> {
+    let (size, memory_type) = parse_dimm(s)?;
+    let rated = speed_word(s, 0x15);
+    let configured = speed_word(s, 0x20);
+    Some(match (rated, configured) {
+        (Some(rated), Some(configured)) if configured != rated => {
+            format!("{size} {memory_type}-{rated}, operating {configured} MT/s")
+        }
+        (Some(rated), _) => format!("{size} {memory_type}-{rated}"),
+        (None, Some(configured)) => {
+            format!("{size} {memory_type}, operating {configured} MT/s")
+        }
+        (None, None) => format!("{size} {memory_type}"),
     })
+}
+
+fn speed_word(s: &Structure<'_>, offset: usize) -> Option<u32> {
+    let value = s.word(offset)?;
+    (value != 0 && value != 0xffff).then_some(u32::from(value))
 }
 
 fn mem_type(value: u8) -> &'static str {
@@ -433,6 +468,25 @@ mod tests {
             formatted: &f,
         };
         assert_eq!(dimm_summary(&s).as_deref(), Some("16 GB DDR5-6400"));
+    }
+
+    #[test]
+    fn dimm_summary_separates_rated_and_operating_speed() {
+        let mut f = vec![0; 0x22];
+        f[0] = 17;
+        f[1] = 0x22;
+        f[0x0c..0x0e].copy_from_slice(&16384u16.to_le_bytes());
+        f[0x12] = 0x22;
+        f[0x15..0x17].copy_from_slice(&6400u16.to_le_bytes());
+        f[0x20..0x22].copy_from_slice(&6000u16.to_le_bytes());
+        let s = Structure {
+            stype: 17,
+            formatted: &f,
+        };
+        assert_eq!(
+            dimm_summary(&s).as_deref(),
+            Some("16 GB DDR5-6400, operating 6000 MT/s")
+        );
     }
     #[test]
     fn malformed_table_is_rejected() {
