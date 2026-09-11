@@ -107,16 +107,41 @@ cargo build --release
 ./target/release/amd-features
 ./target/release/amd-features --json
 ./target/release/amd-features --all --verbose
+./target/release/amd-features --gui
 sudo ./target/release/amd-features --load-msr-module
 ```
 
-Options: `--json/-j`, `--verbose/-v`, `--all/-a`, `--no-color`,
+Options: `--gui`, `--json/-j`, `--verbose/-v`, `--all/-a`, `--no-color`,
 `--load-msr-module`, `--help/-h`, and `--version/-V`.
 
 The program is non-mutating by default. `--load-msr-module` permits one `modprobe msr`
 attempt only when the effective UID is root and `/dev/cpu/0/msr` is missing. Root does
 not guarantee access in containers, under kernel lockdown, or with restrictive device
 cgroups.
+
+### Native desktop GUI
+
+`--gui` opens the System Observatory, a native egui desktop window. The overview
+shows CPU/board identity, feature counts, temperatures, fan and pump speeds, power
+policy, USB4, and report notes. The feature browser includes every catalog entry,
+including absent and unknown results. Browse by category or search names, IDs,
+descriptions, and probe evidence; filter by status or class-based attention. Expand
+a feature to inspect all contributing probes and its hardware-class assessment.
+
+Use **Refresh** for a new snapshot, or enable **Auto · 5s** for periodic collection.
+Scanning runs on one background worker at a time; the previous report remains visible
+while a refresh is running, and failed refreshes are reported explicitly. **Copy
+JSON** copies the complete current report, regardless of the active filters.
+The GUI performs the same read-only probes as the CLI and needs an X11 or Wayland
+desktop with OpenGL support. It does not require a browser or a local web server.
+`--gui` and `--json` are mutually exclusive. Text-format flags (`--all`, `--verbose`,
+and color flags) do not change the GUI, which always offers the full catalog and
+expandable evidence.
+
+GUI support is included in the default build. For a smaller CLI-only build without
+desktop dependencies, use `cargo build --release --no-default-features`. The GUI can
+be restored with `--features gui`. A CLI-only binary explains the missing build
+feature if invoked with `--gui`.
 
 ## Architecture
 

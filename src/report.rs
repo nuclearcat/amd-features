@@ -14,6 +14,33 @@ use crate::model::{Category, Detection, Privilege, Status};
 use crate::probes::cpuid::Identity;
 use crate::probes::firmware::SystemInfo;
 
+/// Collect the same validated probe results for CLI output and GUI refreshes.
+pub fn collect(ctx: &crate::probes::Context) -> Result<Report, String> {
+    let mut results: HashMap<&'static str, Vec<Detection>> = HashMap::new();
+    for probe in crate::probes::all() {
+        let source = probe.name();
+        let covered = probe.feature_ids();
+        let findings = probe
+            .detect(ctx)
+            .map_err(|error| format!("probe {source}: {error}"))?;
+        for (id, detection) in findings {
+            if detection.source != source || !covered.contains(&id) {
+                return Err(format!(
+                    "probe {source} emitted undeclared or mismatched finding {id}"
+                ));
+            }
+            results.entry(id).or_default().push(detection);
+        }
+    }
+    Report::try_build(
+        results,
+        crate::probes::cpuid::identity_with(ctx),
+        crate::probes::firmware::system_info_with(ctx),
+        ctx.privilege,
+    )
+    .map_err(|error| error.to_string())
+}
+
 /// Per-feature rolled-up result.
 #[derive(Debug, Serialize)]
 pub struct FeatureReport {

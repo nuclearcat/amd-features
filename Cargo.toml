@@ -5,10 +5,15 @@ edition = "2021"
 description = "Modular detector for AMD processor and platform features"
 license = "MIT OR Apache-2.0"
 
+[features]
+default = ["gui"]
+gui = ["dep:eframe"]
+
 [dependencies]
 libc = "0.2.186"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+eframe = { version = "0.36.2", optional = true, default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 
 [lib]
 name = "amd_features"

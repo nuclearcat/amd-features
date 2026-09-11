@@ -1,12 +1,13 @@
 //! CLI entry point.
 
-use std::collections::HashMap;
 use std::io::IsTerminal;
 use std::process::ExitCode;
 
-use amd_features::model::Detection;
-use amd_features::probes::{self, Context, ContextOptions};
-use amd_features::report::{Report, TextOptions};
+use amd_features::probes::{Context, ContextOptions};
+use amd_features::report::{self, TextOptions};
+
+#[cfg(feature = "gui")]
+mod gui;
 
 const HELP: &str = "\
 amd-features — detect AMD processor and platform features
@@ -15,6 +16,7 @@ USAGE:
     amd-features [OPTIONS]
 
 OPTIONS:
+        --gui         Open the native feature dashboard
     -j, --json        Emit the report as JSON
     -v, --verbose     Show each probe's finding under every feature (text mode)
     -a, --all         Include features detected as absent (hidden by default)
@@ -35,6 +37,7 @@ TRADEMARKS:
 ";
 
 struct Args {
+    gui: bool,
     json: bool,
     verbose: bool,
     show_absent: bool,
@@ -48,35 +51,25 @@ fn main() -> ExitCode {
         Err(code) => return code,
     };
 
-    // Gather findings from every probe, aggregated per feature id.
     let ctx = Context::with_options(ContextOptions {
         load_msr_module: args.load_msr_module,
     });
-    let mut results: HashMap<&'static str, Vec<Detection>> = HashMap::new();
-    for probe in probes::all() {
-        let source = probe.name();
-        let covered = probe.feature_ids();
-        let findings = match probe.detect(&ctx) {
-            Ok(findings) => findings,
+    if args.gui {
+        #[cfg(feature = "gui")]
+        return match gui::run(ctx) {
+            Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
-                eprintln!("internal error: probe {} failed: {error}", probe.name());
-                return ExitCode::from(1);
+                eprintln!("cannot open GUI: {error}");
+                ExitCode::from(1)
             }
         };
-        for (id, det) in findings {
-            if det.source != source || !covered.contains(&id) {
-                eprintln!(
-                    "internal error: probe {source} emitted undeclared or mismatched finding {id}"
-                );
-                return ExitCode::from(1);
-            }
-            results.entry(id).or_default().push(det);
+        #[cfg(not(feature = "gui"))]
+        {
+            eprintln!("GUI support is not included in this build; rebuild with --features gui");
+            return ExitCode::from(2);
         }
     }
-
-    let identity = probes::cpuid::identity_with(&ctx);
-    let system = probes::firmware::system_info_with(&ctx);
-    let report = match Report::try_build(results, identity, system, ctx.privilege) {
+    let report = match report::collect(&ctx) {
         Ok(report) => report,
         Err(error) => {
             eprintln!("internal error: {error}");
@@ -107,6 +100,7 @@ fn parse_args() -> Result<Args, ExitCode> {
 
 fn parse_args_from(args_iter: impl IntoIterator<Item = String>) -> Result<Args, ExitCode> {
     let mut args = Args {
+        gui: false,
         json: false,
         verbose: false,
         show_absent: false,
@@ -115,6 +109,7 @@ fn parse_args_from(args_iter: impl IntoIterator<Item = String>) -> Result<Args, 
     };
     for arg in args_iter {
         match arg.as_str() {
+            "--gui" => args.gui = true,
             "-j" | "--json" => args.json = true,
             "-v" | "--verbose" => args.verbose = true,
             "-a" | "--all" => args.show_absent = true,
@@ -134,6 +129,10 @@ fn parse_args_from(args_iter: impl IntoIterator<Item = String>) -> Result<Args, 
                 return Err(ExitCode::from(2));
             }
         }
+    }
+    if args.gui && args.json {
+        eprintln!("error: --gui and --json cannot be used together");
+        return Err(ExitCode::from(2));
     }
     Ok(args)
 }
@@ -159,5 +158,13 @@ mod tests {
     #[test]
     fn rejects_unknown_option() {
         assert!(parse_args_from(["--bogus".to_string()]).is_err());
+    }
+
+    #[test]
+    fn gui_is_explicit_and_conflicts_with_json() {
+        assert!(!parse_args_from(Vec::<String>::new()).unwrap().gui);
+        assert!(parse_args_from(["--gui".into()]).unwrap().gui);
+        assert!(parse_args_from(["--gui".into(), "--json".into()]).is_err());
+        assert!(parse_args_from(["--json".into(), "--gui".into()]).is_err());
     }
 }
