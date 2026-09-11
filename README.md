@@ -4,6 +4,26 @@
 Linux/x86-64. It reports silicon support, firmware enablement, and operating-system
 state separately instead of collapsing them into one ambiguous yes/no answer.
 
+## Screenshots
+
+Captured on an AMD Ryzen 7 9800X3D system running Linux, using the default
+unprivileged probes. Results vary with hardware, firmware, kernel, and permissions.
+
+### GUI overview
+
+The native System Observatory shows hardware identity, feature counts, and live
+sensor snapshots. Launch it with `./target/release/amd-features --gui`.
+
+![AMD Features GUI overview showing a Ryzen 7 9800X3D, feature counts, temperatures, and fan speeds](docs/screenshots/gui-overview.png)
+
+### CLI report
+
+The terminal report shows feature status, evidence sources, and hardware-class
+attention markers. This screenshot shows the beginning of the report from
+`./target/release/amd-features`.
+
+![AMD Features CLI report showing CPU and board identity, instruction-set support, and a class-based attention marker](docs/screenshots/cli-report.png)
+
 ## What it detects
 
 The catalog covers AMD and common x86 features across instruction sets, speculation
