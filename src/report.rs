@@ -337,7 +337,9 @@ fn render_feature(s: &mut String, f: &FeatureReport, opts: TextOptions) {
             .join(", ")
     };
     let label = colorize(&format!("{:<9}", f.status.label()), color, opts.color);
-    let evidence = format!("{trailing:<24}");
+    let mut detail_lines = trailing.lines();
+    let first_line = detail_lines.next().unwrap_or_default();
+    let evidence = format!("{first_line:<24}");
     s.push_str(&format!(
         "  {} {:<22} {} {} {}\n",
         glyph,
@@ -346,6 +348,9 @@ fn render_feature(s: &mut String, f: &FeatureReport, opts: TextOptions) {
         dim(&evidence, opts.color),
         f.description,
     ));
+    for line in detail_lines {
+        s.push_str(&format!("{:38}{}\n", "", dim(line, opts.color)));
+    }
     if let (Some(expectation), Some(attention)) = (f.expectation, f.attention) {
         let qualifier = match expectation.level {
             ExpectationLevel::Expected => "expected",

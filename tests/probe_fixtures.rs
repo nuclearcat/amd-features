@@ -699,3 +699,219 @@ fn jedec_only_spd_is_absent_xmp() {
         .unwrap();
     assert!(detail.contains("JEDEC 4800"));
 }
+
+fn detail<'a>(findings: &'a amd_features::probes::Findings, id: &str) -> &'a str {
+    findings
+        .iter()
+        .find(|(key, _)| *key == id)
+        .unwrap()
+        .1
+        .detail
+        .as_deref()
+        .unwrap()
+}
+
+#[test]
+fn sensors_preserve_labels_sparse_channels_negative_temperatures_and_zero_rpm() {
+    let reader = MemoryReader::default()
+        .dir("/sys/class/hwmon", &["hwmon3", "hwmon4"])
+        .file("/sys/class/hwmon/hwmon3/name", "spd5118")
+        .dir("/sys/class/hwmon/hwmon3", &["temp3_input", "fan7_input"])
+        .file("/sys/class/hwmon/hwmon3/temp3_input", "-1250")
+        .file("/sys/class/hwmon/hwmon3/temp3_label", "DIMM")
+        .file("/sys/class/hwmon/hwmon3/fan7_input", "0")
+        .file("/sys/class/hwmon/hwmon4/name", "spd5118")
+        .dir("/sys/class/hwmon/hwmon4", &["temp1_input"])
+        .file("/sys/class/hwmon/hwmon4/temp1_input", "35250");
+    let findings = SysfsProbe.detect(&context(reader)).unwrap();
+    assert_eq!(status(&findings, "temperatures"), Status::Present);
+    assert!(detail(&findings, "temperatures").contains("spd5118/hwmon3 DIMM (temp3): -1.250 °C"));
+    assert!(detail(&findings, "temperatures").contains("spd5118/hwmon4 temp1 (temp1): 35.250 °C"));
+    assert_eq!(status(&findings, "fan_speeds"), Status::Present);
+    assert!(detail(&findings, "fan_speeds").contains("fan7 (fan7): 0 RPM"));
+}
+
+#[test]
+fn sensor_faults_and_malformed_readings_are_unknown_without_hiding_good_channels() {
+    for (attribute, value) in [("temp3_fault", "1"), ("temp3_input", "invalid")] {
+        let reader = MemoryReader::default()
+            .dir("/sys/class/hwmon", &["hwmon0"])
+            .file("/sys/class/hwmon/hwmon0/name", "k10temp")
+            .dir(
+                "/sys/class/hwmon/hwmon0",
+                &["temp1_input", "temp3_input", "fan1_input"],
+            )
+            .file("/sys/class/hwmon/hwmon0/temp1_input", "40000")
+            .file("/sys/class/hwmon/hwmon0/temp3_input", "50000")
+            .file(&format!("/sys/class/hwmon/hwmon0/{attribute}"), value)
+            .file("/sys/class/hwmon/hwmon0/fan1_input", "-1");
+        let findings = SysfsProbe.detect(&context(reader)).unwrap();
+        assert_eq!(status(&findings, "temperatures"), Status::Unknown);
+        assert!(detail(&findings, "temperatures").contains("40.000 °C"));
+        assert!(!detail(&findings, "temperatures").contains("50.000 °C"));
+        assert_eq!(status(&findings, "fan_speeds"), Status::Unknown);
+    }
+}
+
+#[test]
+fn disabled_sensor_is_not_read_as_a_temperature() {
+    let reader = MemoryReader::default()
+        .dir("/sys/class/hwmon", &["hwmon0"])
+        .file("/sys/class/hwmon/hwmon0/name", "k10temp")
+        .dir("/sys/class/hwmon/hwmon0", &["temp1_input"])
+        .file("/sys/class/hwmon/hwmon0/temp1_enable", "0");
+    let findings = SysfsProbe.detect(&context(reader)).unwrap();
+    assert!(detail(&findings, "temperatures").contains("disabled"));
+    assert!(!detail(&findings, "temperatures").contains("°C"));
+}
+
+fn policy(reader: MemoryReader, number: u32, governor: &str, epp: Option<&str>) -> MemoryReader {
+    let base = format!("/sys/devices/system/cpu/cpufreq/policy{number}");
+    let mut reader = reader
+        .file(&format!("{base}/scaling_driver"), "amd-pstate-epp")
+        .file(&format!("{base}/scaling_governor"), governor)
+        .file(&format!("{base}/scaling_min_freq"), "603379")
+        .file(&format!("{base}/scaling_max_freq"), "5271622");
+    if let Some(epp) = epp {
+        reader = reader.file(&format!("{base}/energy_performance_preference"), epp);
+    }
+    reader
+}
+
+#[test]
+fn power_policy_groups_equal_policies_and_preserves_differences() {
+    let reader = MemoryReader::default()
+        .dir(
+            "/sys/devices/system/cpu/cpufreq",
+            &["policy10", "policy2", "policy0"],
+        )
+        .file("/sys/devices/system/cpu/amd_pstate/status", "active")
+        .file("/sys/devices/system/cpu/amd_pstate/prefcore", "enabled");
+    let reader = policy(
+        policy(
+            policy(reader, 0, "performance", Some("performance")),
+            10,
+            "performance",
+            Some("performance"),
+        ),
+        2,
+        "powersave",
+        Some("balance_power"),
+    );
+    let findings = SysfsProbe.detect(&context(reader)).unwrap();
+    let text = detail(&findings, "power_policy");
+    assert_eq!(status(&findings, "power_policy"), Status::Present);
+    for expected in [
+        "amd_pstate status=active",
+        "prefcore=enabled",
+        "policy0,policy10:",
+        "policy2:",
+        "EPP=balance_power",
+        "limits=603.379-5271.622 MHz",
+    ] {
+        assert!(text.contains(expected), "missing {expected}: {text}");
+    }
+}
+
+#[test]
+fn power_policy_handles_missing_epp_and_denied_or_malformed_limits() {
+    let base = "/sys/devices/system/cpu/cpufreq/policy3/scaling_max_freq";
+    for case in 0..4 {
+        let mut reader = policy(
+            MemoryReader::default().dir("/sys/devices/system/cpu/cpufreq", &["policy3"]),
+            3,
+            "schedutil",
+            None,
+        );
+        match case {
+            1 => {
+                reader.denied.insert(base.into());
+            }
+            2 => {
+                reader = reader.file(base, "invalid");
+            }
+            3 => {
+                reader = reader.file(base, "100");
+            }
+            _ => {}
+        }
+        let findings = SysfsProbe.detect(&context(reader)).unwrap();
+        assert_eq!(
+            status(&findings, "power_policy"),
+            if case == 0 {
+                Status::Present
+            } else {
+                Status::Unknown
+            }
+        );
+        assert!(detail(&findings, "power_policy").contains("EPP=not exposed"));
+    }
+}
+
+#[test]
+fn usb4_detects_host_and_device_without_vendor_filtering() {
+    let root = "/sys/bus/thunderbolt/devices";
+    let reader = MemoryReader::default()
+        .dir(
+            root,
+            &["domain0", "0-0", "0-1", "0-1:1.1", "0-1.0", "usb4_port1"],
+        )
+        .file(&format!("{root}/domain0/security"), "user")
+        .file(&format!("{root}/domain0/iommu_dma_protection"), "1")
+        .file(&format!("{root}/0-0/generation"), "4")
+        .file(&format!("{root}/0-0/device_name"), "ASM4242")
+        .file(&format!("{root}/0-1/generation"), "4")
+        .file(&format!("{root}/0-1/authorized"), "0")
+        .file(&format!("{root}/0-1/rx_speed"), "20.0 Gb/s")
+        .file(&format!("{root}/0-1/rx_lanes"), "2");
+    let findings = SysfsProbe.detect(&context(reader)).unwrap();
+    assert_eq!(status(&findings, "usb4"), Status::Enabled);
+    let text = detail(&findings, "usb4");
+    for expected in [
+        "ASM4242",
+        "host router",
+        "device router",
+        "security=user",
+        "iommu_dma_protection=1",
+        "authorized=0",
+        "20.0 Gb/s per lane",
+        "rx_lanes=2",
+    ] {
+        assert!(text.contains(expected), "missing {expected}: {text}");
+    }
+}
+
+#[test]
+fn thunderbolt3_is_not_usb4_and_unknown_generation_is_not_absent() {
+    for (generation, expected) in [
+        ("3", Status::Absent),
+        ("garbage", Status::Unknown),
+        ("5", Status::Unknown),
+    ] {
+        let reader = MemoryReader::default()
+            .dir("/sys/bus/thunderbolt/devices", &["0-0"])
+            .file("/sys/bus/thunderbolt/devices/0-0/generation", generation);
+        let findings = SysfsProbe.detect(&context(reader)).unwrap();
+        assert_eq!(status(&findings, "usb4"), expected);
+    }
+}
+
+#[test]
+fn runtime_snapshots_distinguish_missing_empty_and_partial_interfaces() {
+    for (root, ids) in [
+        ("/sys/class/hwmon", &["temperatures", "fan_speeds"][..]),
+        ("/sys/devices/system/cpu/cpufreq", &["power_policy"][..]),
+        ("/sys/bus/thunderbolt/devices", &["usb4"][..]),
+    ] {
+        for (reader, expected) in [
+            (MemoryReader::default(), Status::Unknown),
+            (MemoryReader::default().dir(root, &[]), Status::Absent),
+            (MemoryReader::default().partial_dir(root), Status::Unknown),
+        ] {
+            let findings = SysfsProbe.detect(&context(reader)).unwrap();
+            for id in ids {
+                assert_eq!(status(&findings, id), expected, "{id}");
+            }
+        }
+    }
+}

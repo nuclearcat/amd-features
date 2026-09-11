@@ -24,6 +24,8 @@ Ten independent probes provide traceable evidence:
 - **linux-sysfs** reports SMT and KVM state, `amd_pstate`, boost clocks, PPT/TDP,
   3D V-Cache, Infinity Fabric/memory data rate, XMP/EXPO profiles from SPD EEPROM,
   CPU idle, AMD energy/hwmon drivers, TPM, resctrl/PQoS, Bluetooth, and IPMI.
+  It also reports CPU power policies, hwmon temperature/fan readings, and USB4
+  routers through the runtime interfaces described below.
 - **linux-vuln** preserves the kernel's mitigation text from
   `/sys/devices/system/cpu/vulnerabilities`.
 - **msr** performs read-only AMD MSR queries for VM_CR, SYSCFG, SEV status, HWCR,
@@ -48,6 +50,40 @@ Missing, inaccessible, malformed, or partially enumerated authoritative interfac
 reported as `unknown`. `absent` is only used when the relevant parent interface was
 successfully inspected. On a non-AMD CPU, vendor-specific CPUID and MSR findings are
 reported as unknown rather than mis-decoded.
+
+### Runtime snapshots
+
+The following read-only snapshots appear in both the normal text report and JSON:
+
+- **CPU Power Policy** (`power_policy`): global AMD P-State mode and preferred-core
+  setting, plus each cpufreq policy's driver, governor, energy-performance preference
+  (EPP), available preferences/governors, configured minimum/maximum frequency, and
+  per-policy boost state when exposed. Policies with identical reported settings are
+  grouped; different policies remain separate. These are configured limits, not
+  measured clocks. Missing optional EPP support is explicitly marked as not exposed.
+- **Temperatures** (`temperatures`) and **Fan Speeds** (`fan_speeds`): all enumerated
+  hwmon temperature and fan input channels, including CPU, GPU, DIMM, motherboard,
+  storage, and network-device sensors. Driver name, hwmon device, channel ID, and
+  kernel-provided label identify each reading. Temperatures are shown in degrees
+  Celsius and fan speeds in RPM. Disabled and faulty channels are identified; valid
+  readings survive partial failures, with the overall snapshot marked unknown.
+  Values and labels come directly from the kernel, without applying `sensors.conf`
+  overrides or legacy voltage-to-temperature conversions. Zero readings are preserved: zero RPM alone does not prove a fan fault,
+  and unused motherboard channels may report zero temperature.
+- **USB4** (`usb4`): routers reporting `generation=4` on the Linux Thunderbolt bus,
+  regardless of vendor, including ASMedia controllers. Reports host/device identity,
+  authorization, domain security and IOMMU DMA-protection state, and RX/TX speed per
+  lane and lane counts when exposed. An enabled result means a USB4 router is
+  enumerated; it does not imply a connected peripheral or an authorized PCIe tunnel.
+  Thunderbolt generations 1–3 are not classified as USB4. A missing bus interface is
+  unknown; an inspected bus with no USB4 routers is reported as absent from that bus.
+
+These are sequential snapshots, not continuous monitoring or atomic samples. No
+power policy, fan control, device authorization, or firmware setting is changed.
+The interfaces follow the Linux kernel documentation for
+[AMD P-State](https://docs.kernel.org/admin-guide/pm/amd-pstate.html),
+[hwmon](https://docs.kernel.org/hwmon/sysfs-interface.html), and
+[Thunderbolt/USB4 sysfs](https://github.com/torvalds/linux/blob/master/Documentation/ABI/testing/sysfs-bus-thunderbolt).
 
 ## Class-aware attention
 

@@ -8,6 +8,7 @@ pub mod memory;
 pub mod msr;
 pub mod pci;
 pub mod procfs;
+mod runtime;
 pub mod spd;
 pub mod sysfs;
 pub mod telemetry;

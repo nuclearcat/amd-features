@@ -340,3 +340,35 @@ fn zen5_identity() -> Identity {
         microcode: None,
     }
 }
+
+#[test]
+fn runtime_details_render_on_separate_lines_and_survive_json() {
+    let mut results = HashMap::new();
+    let detail = "k10temp/hwmon2 Tctl: 44.125 °C\nspd5118/hwmon3 temp1: 35.250 °C";
+    results.insert(
+        "temperatures",
+        vec![Detection::with_detail(
+            Status::Present,
+            "linux-sysfs",
+            detail,
+        )],
+    );
+    let report = Report::build(results, None, None, Privilege::User);
+    let text = report.render_text(amd_features::report::TextOptions {
+        color: false,
+        verbose: false,
+        hide_absent: true,
+    });
+    assert!(text
+        .lines()
+        .any(|line| line.starts_with("                                      spd5118/hwmon3")));
+    let json: serde_json::Value = serde_json::from_str(&report.to_json()).unwrap();
+    let feature = json["categories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|category| category["features"].as_array().unwrap())
+        .find(|feature| feature["id"] == "temperatures")
+        .unwrap();
+    assert_eq!(feature["detections"][0]["detail"], detail);
+}
