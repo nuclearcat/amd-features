@@ -9,6 +9,7 @@ pub mod msr;
 pub mod pci;
 pub mod procfs;
 mod runtime;
+pub mod sdci;
 pub mod spd;
 pub mod sysfs;
 pub mod telemetry;
@@ -235,6 +236,7 @@ pub fn all() -> Vec<Box<dyn Probe>> {
         Box::new(vulns::VulnProbe),
         Box::new(msr::MsrProbe),
         Box::new(pci::PciProbe),
+        Box::new(sdci::SdciProbe),
         Box::new(acpi::AcpiProbe),
         Box::new(firmware::EfiProbe),
         Box::new(firmware::DmiProbe),

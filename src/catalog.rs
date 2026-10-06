@@ -165,6 +165,14 @@ pub const FEATURES: &[FeatureDef] = &[
     n("mba", "Memory Bandwidth Allocation", Rdt, "AMD Platform QoS bandwidth control"),
     n("resctrl", "resctrl", Rdt, "Linux resource-control filesystem"),
 
+    // SDCI components are deliberately not collapsed into a support boolean.
+    v("sdciae", "CPU SDCIAE", Sdci, "Cache-allocation enforcement capability; not proof of active SDCI"),
+    v("sdci_roots", "Root-port TPH", Sdci, "PCIe root-port completer capabilities"),
+    v("sdci_devices", "Device TPH", Sdci, "Requester capabilities and current control state, across all vendors"),
+    v("sdci_kernel", "Kernel TPH", Sdci, "Running-kernel configuration and boot policy"),
+    v("sdci_firmware", "Firmware / chipset", Sdci, "Platform cache-injection and steering-tag enablement"),
+    v("sdci_active", "Active SDCI", Sdci, "End-to-end cache injection is not inferred from capability bits"),
+
     // AMD PCI/platform devices
     v("igpu", "Integrated Radeon GPU", Accelerators, "AMD integrated display controller"),
     v("dgpu", "Discrete Radeon GPU", Accelerators, "AMD discrete graphics or compute GPU"),

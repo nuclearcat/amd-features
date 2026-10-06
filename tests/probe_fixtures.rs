@@ -915,3 +915,131 @@ fn runtime_snapshots_distinguish_missing_empty_and_partial_interfaces() {
         }
     }
 }
+
+// Synthetic PCI configuration: conventional PCIe capability and optional TPH
+// requester. The vendor is deliberately non-AMD.
+fn sdci_config(root: bool, tph: Option<(u32, u32)>) -> Vec<u8> {
+    let mut data = vec![0u8; 4096];
+    data[0..2].copy_from_slice(&0x10ecu16.to_le_bytes());
+    data[6] = 0x10;
+    data[0x34] = 0x40;
+    data[0x40] = 0x10;
+    data[0x42] = if root { 0x42 } else { 0x02 };
+    if root {
+        data[0x64..0x68].copy_from_slice(&0x1000u32.to_le_bytes());
+    }
+    if let Some((cap, ctrl)) = tph {
+        data[0x100..0x104].copy_from_slice(&0x10017u32.to_le_bytes());
+        data[0x104..0x108].copy_from_slice(&cap.to_le_bytes());
+        data[0x108..0x10c].copy_from_slice(&ctrl.to_le_bytes());
+    }
+    data
+}
+
+#[test]
+fn sdci_separates_root_support_requester_state_and_actual_injection() {
+    use amd_features::probes::sdci::SdciProbe;
+    for (control, expected) in [
+        (0, Status::Disabled),
+        (0x100, Status::Enabled),
+        (0x200, Status::Unknown),
+        (0x101, Status::Unknown),
+    ] {
+        let reader = MemoryReader::default()
+            .dir("/sys/bus/pci/devices", &["0000:00:01.0", "0000:01:00.0"])
+            .file(
+                "/sys/bus/pci/devices/0000:00:01.0/config",
+                sdci_config(true, None),
+            )
+            .file(
+                "/sys/bus/pci/devices/0000:01:00.0/config",
+                sdci_config(false, Some((1, control))),
+            )
+            .link(
+                "/sys/bus/pci/devices/0000:01:00.0/driver",
+                "/sys/bus/pci/drivers/r8169",
+            );
+        let f = SdciProbe.detect(&context(reader)).unwrap();
+        assert_eq!(status(&f, "sdci_roots"), Status::Present);
+        assert_eq!(status(&f, "sdci_devices"), expected);
+        assert!(detail(&f, "sdci_devices").contains("No ST"));
+        assert!(detail(&f, "sdci_devices").contains("driver r8169"));
+        assert_eq!(status(&f, "sdci_firmware"), Status::Unknown);
+        assert_eq!(status(&f, "sdci_active"), Status::Unknown);
+    }
+}
+
+#[test]
+fn sdci_inaccessible_truncated_and_looping_config_stays_unknown() {
+    use amd_features::probes::sdci::SdciProbe;
+    let mut looping = sdci_config(false, None);
+    looping[0x100..0x104].copy_from_slice(&0x10010001u32.to_le_bytes());
+    let mut conventional_loop = sdci_config(false, None);
+    conventional_loop[0x41] = 0x40;
+    for data in [
+        vec![0; 32],
+        sdci_config(false, None)[..64].to_vec(),
+        sdci_config(false, None)[..256].to_vec(),
+        looping,
+        conventional_loop,
+    ] {
+        let reader = MemoryReader::default()
+            .dir("/sys/bus/pci/devices", &["0000:01:00.0"])
+            .file("/sys/bus/pci/devices/0000:01:00.0/config", data);
+        let f = SdciProbe.detect(&context(reader)).unwrap();
+        assert_eq!(status(&f, "sdci_devices"), Status::Unknown);
+    }
+    let missing = SdciProbe.detect(&context(MemoryReader::default())).unwrap();
+    assert_eq!(status(&missing, "sdci_roots"), Status::Unknown);
+    let empty = SdciProbe
+        .detect(&context(
+            MemoryReader::default().dir("/sys/bus/pci/devices", &[]),
+        ))
+        .unwrap();
+    assert_eq!(status(&empty, "sdci_devices"), Status::Absent);
+    let partial = SdciProbe
+        .detect(&context(
+            MemoryReader::default().partial_dir("/sys/bus/pci/devices"),
+        ))
+        .unwrap();
+    assert_eq!(status(&partial, "sdci_devices"), Status::Unknown);
+}
+
+#[test]
+fn sdci_mixed_requesters_and_partial_inventory_preserve_evidence() {
+    use amd_features::probes::sdci::SdciProbe;
+    for second in [Some(sdci_config(false, Some((1, 0x100)))), None] {
+        let mut reader = MemoryReader::default()
+            .dir("/sys/bus/pci/devices", &["0000:01:00.0", "0000:02:00.0"])
+            .file(
+                "/sys/bus/pci/devices/0000:01:00.0/config",
+                sdci_config(false, Some((1, 0))),
+            );
+        if let Some(data) = second {
+            reader = reader.file("/sys/bus/pci/devices/0000:02:00.0/config", data);
+        }
+        let f = SdciProbe.detect(&context(reader)).unwrap();
+        assert_eq!(status(&f, "sdci_devices"), Status::Unknown);
+        assert!(detail(&f, "sdci_devices").contains("requester disabled"));
+    }
+}
+
+#[test]
+fn sdci_kernel_checks_configuration_and_exact_boot_option() {
+    use amd_features::probes::sdci::SdciProbe;
+    for (config, cmdline, expected) in [
+        ("CONFIG_PCIE_TPH=y", "quiet", Status::Present),
+        ("CONFIG_PCIE_TPH=y", "quiet notph", Status::Disabled),
+        ("CONFIG_PCIE_TPH=y", "foo=notph", Status::Present),
+        ("CONFIG_PCIE_TPH=y", "-- notph", Status::Present),
+        ("# CONFIG_PCIE_TPH is not set", "quiet", Status::Disabled),
+        ("", "quiet", Status::Unknown),
+    ] {
+        let reader = MemoryReader::default()
+            .file("/proc/sys/kernel/osrelease", "test\n")
+            .file("/boot/config-test", config)
+            .file("/proc/cmdline", cmdline);
+        let f = SdciProbe.detect(&context(reader)).unwrap();
+        assert_eq!(status(&f, "sdci_kernel"), expected);
+    }
+}

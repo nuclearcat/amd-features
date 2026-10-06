@@ -183,7 +183,7 @@ impl Report {
                 .features
                 .iter()
                 .filter(|f| {
-                    if !opts.hide_absent {
+                    if !opts.hide_absent || cat.category == Category::Sdci {
                         return true;
                     }
                     // Highlighted absent features remain visible: hiding the exact

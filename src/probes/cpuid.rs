@@ -29,6 +29,7 @@ pub struct Identity {
 pub struct CpuidProbe;
 
 const FEATURES: &[&str] = &[
+    "sdciae",
     "abm",
     "adx",
     "aes",
@@ -298,6 +299,13 @@ fn scan_core(logical_cpu: u32, ctx: &Context) -> CoreScan {
         (0, 0, 0, 0)
     };
     bits!(l71a, "CPUID.07H.1", "EAX", "avx_vnni"=>4, "avx512bf16"=>5);
+
+    let sdciae = max_ext >= 0x8000_0020 && bit(cpuid(0x8000_0020, 0).1, 6);
+    push(
+        "sdciae",
+        sdciae,
+        "CPUID.80000020H.0:EBX[6] (SDCI allocation enforcement only)",
+    );
 
     let (_, _, e1c, e1d) = if max_ext >= 0x8000_0001 {
         cpuid(0x8000_0001, 0)

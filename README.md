@@ -33,7 +33,7 @@ topology, memory-channel capability, Instruction-Based Sampling, Platform QoS, A
 PCI devices and motherboard chipsets, ACPI, UEFI, SMBIOS memory, and kernel
 vulnerability mitigations.
 
-Ten independent probes provide traceable evidence:
+Eleven independent probes provide traceable evidence:
 
 - **cpuid** reads standard and AMD extended leaves on every eligible logical CPU,
   pinned one CPU at a time. It reports asymmetric feature exposure, the processor
@@ -53,6 +53,8 @@ Ten independent probes provide traceable evidence:
 - **pci** inventories AMD/ATI PCI functions including integrated vs discrete Radeon
   GPUs (VRAM, GTT/UMA, ReBAR/SAM, VCN/UVD, ROCm/KFD), Ryzen AI/XDNA, PSP/CCP,
   chipset bridges, audio, SMBus, USB, SATA, NVMe, and networking.
+- **sdci** inspects PCIe root-port TPH completers and all-vendor TPH requesters,
+  plus running-kernel TPH configuration, for the dedicated SDCI report.
 - **acpi** detects AMD-Vi through IVRS/IOMMU state plus LPIT, NFIT, CEDT, HMAT,
   HPET, SRAT, WSMT, and TPM2.
 - **efi** reports UEFI boot, Secure Boot, Setup Mode, and ESRT.
@@ -70,6 +72,36 @@ Missing, inaccessible, malformed, or partially enumerated authoritative interfac
 reported as `unknown`. `absent` is only used when the relevant parent interface was
 successfully inspected. On a non-AMD CPU, vendor-specific CPUID and MSR findings are
 reported as unknown rather than mis-decoded.
+
+### SDCI report
+
+The CLI, JSON (`categories[].category = "sdci"`), and GUI include a dedicated
+**SDCI — Smart Data Cache Injection** section. The GUI also shows it on the overview.
+It separates:
+
+- **CPU SDCIAE**: CPUID `80000020H`, subleaf 0, EBX bit 6, sampled by the existing
+  per-CPU probe. This is allocation-enforcement support, not an SDCI enable bit.
+- **Root-port TPH**: each PCIe root port's TPH and extended-TPH completer support.
+- **Device TPH**: requester modes, current requester enablement, raw capability and
+  control registers, and bound driver for devices from every vendor. A supported
+  No-ST mode remains valid without a steering table. Enabled means the requester
+  control permits TPH traffic; it does not establish actual cache injection.
+- **Kernel TPH**: `CONFIG_PCIE_TPH` from the running kernel's `/boot/config-*` and
+  the `notph` boot option. Kernel version alone is insufficient.
+- **Firmware / chipset** and **Active SDCI**: explicitly unknown, because the tool
+  does not evaluate firmware cache-locality methods, read a BIOS SDCI setting, or
+  measure cache injection. A chipset name or PCIe switch does not prove support.
+
+PCI configuration access often requires root. Short reads, inaccessible devices,
+malformed capability chains, and incomplete enumeration produce unknown results,
+while retaining readable evidence. Mixed per-device states are also unknown at the
+section-row level; each device's state remains visible. Absent SDCI prerequisites
+remain visible even without `--all`. No configuration registers are written and no
+privilege escalation is performed by the tool.
+
+References: [Linux TPH documentation](https://docs.kernel.org/PCI/tph.html),
+[Linux PCI register definitions](https://github.com/torvalds/linux/blob/master/include/uapi/linux/pci_regs.h),
+and [AMD64 System Programming manual](https://docs.amd.com/api/khub/documents/sD1_QL~h4Afq2_tvzxqqSQ/content).
 
 ### Runtime snapshots
 

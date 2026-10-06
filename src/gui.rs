@@ -311,6 +311,7 @@ fn short_category(category: Category) -> &'static str {
         Category::Power => "Power & thermal",
         Category::Topology => "CPU topology",
         Category::Perf => "Performance monitoring",
+        Category::Sdci => "SDCI report",
         Category::Rdt => "Quality of service",
         Category::Accelerators => "Graphics & accelerators",
         Category::Platform => "Platform & connectivity",
@@ -516,6 +517,20 @@ fn overview(ui: &mut Ui, report: &Report) {
     section(ui, "Power & connectivity", "Current configuration");
     for id in ["power_policy", "usb4"] {
         if let Some(feature) = find(report, id) {
+            feature_card(ui, feature);
+        }
+    }
+    section(
+        ui,
+        "SDCI report",
+        "Capabilities and enablement are separate findings",
+    );
+    if let Some(category) = report
+        .categories
+        .iter()
+        .find(|c| c.category == Category::Sdci)
+    {
+        for feature in &category.features {
             feature_card(ui, feature);
         }
     }

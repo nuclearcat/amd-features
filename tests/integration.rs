@@ -372,3 +372,28 @@ fn runtime_details_render_on_separate_lines_and_survive_json() {
         .unwrap();
     assert_eq!(feature["detections"][0]["detail"], detail);
 }
+
+#[test]
+fn sdci_section_keeps_absent_prerequisites_visible_and_serializes_separately() {
+    let mut findings = HashMap::new();
+    findings.insert(
+        "sdciae",
+        vec![Detection::with_detail(Status::Absent, "cpuid", "bit clear")],
+    );
+    let report = Report::build(findings, None, None, Privilege::User);
+    let text = report.render_text(amd_features::report::TextOptions {
+        color: false,
+        verbose: false,
+        hide_absent: true,
+    });
+    assert!(text.contains("SDCI — Smart Data Cache Injection"));
+    assert!(text.contains("CPU SDCIAE"));
+    let json: serde_json::Value = serde_json::from_str(&report.to_json()).unwrap();
+    let sdci = json["categories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["category"] == "sdci")
+        .unwrap();
+    assert_eq!(sdci["features"].as_array().unwrap().len(), 6);
+}
