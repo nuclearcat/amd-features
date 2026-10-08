@@ -163,6 +163,19 @@ The GUI shows hints on the feature card, and JSON exposes them as `hint` on each
 detection and `hints` on each feature. Hints are dropped once a feature is enabled. The
 tool only suggests commands; it never runs them.
 
+## Install
+
+[Releases](https://github.com/nuclearcat/amd-features/releases) provide x86_64 builds:
+
+- `amd-features_<version>-1_amd64.deb` for Debian 12+ and Ubuntu 22.04+
+  (`sudo apt install ./amd-features_*.deb`)
+- `amd-features-<version>-1.x86_64.rpm` for Fedora, openSUSE and other RPM distributions
+- `amd-features-<version>-x86_64-linux-gnu.tar.gz` for the CLI and GUI on any distribution with glibc 2.35+
+- `amd-features-<version>-x86_64-linux-musl-cli.tar.gz`, a fully static CLI without the GUI
+
+Maintainers build these with `scripts/release.sh` (needs Docker, `cargo-deb`,
+`cargo-generate-rpm` and the `x86_64-unknown-linux-musl` target).
+
 ## Build and run
 
 ```sh

@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 description = "Modular detector for AMD processor and platform features"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/nuclearcat/amd-features"
+authors = ["Denys Fedoryshchenko <nuclearcat@gmail.com>"]
 
 [features]
 default = ["gui"]
@@ -26,3 +28,26 @@ path = "src/main.rs"
 [profile.release]
 lto = true
 strip = true
+
+[package.metadata.deb]
+maintainer = "Denys Fedoryshchenko <nuclearcat@gmail.com>"
+section = "utils"
+priority = "optional"
+recommends = "libegl1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libx11-6, libxcursor1, libxi6, libxrandr2"
+extended-description = """\
+Detects AMD processor and platform features (ISA extensions, security, \
+virtualization, power, Platform QoS, memory, GPU and more) by combining CPUID, \
+/proc, sysfs, MSR, ACPI and PCI probes, and suggests fixes for features that are \
+present but not enabled. Includes a CLI report, JSON output and a native GUI."""
+assets = [
+    ["target/release/amd-features", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/amd-features/README.md", "644"],
+]
+
+[package.metadata.generate-rpm]
+auto-req = "no"
+requires = { glibc = ">= 2.35" }
+assets = [
+    { source = "target/release/amd-features", dest = "/usr/bin/amd-features", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/amd-features/README.md", mode = "644", doc = true },
+]
