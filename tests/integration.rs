@@ -201,6 +201,40 @@ fn json_output_is_produced() {
     assert!(json.contains("\"privilege\": \"root\""));
 }
 
+/// Identical hints are listed once under "Suggested fixes" with every feature they
+/// help, and a feature that is already enabled carries no hint.
+#[test]
+fn hints_are_grouped_and_dropped_once_enabled() {
+    let hint = "sudo mount -t resctrl resctrl /sys/fs/resctrl";
+    let mut results = HashMap::new();
+    for id in ["l3_cat", "mba"] {
+        results.insert(
+            id,
+            vec![
+                Detection::new(Status::Present, "procfs"),
+                Detection::new(Status::Unknown, "linux-sysfs").with_hint(hint),
+            ],
+        );
+    }
+    results.insert(
+        "smt",
+        vec![Detection::new(Status::Enabled, "linux-sysfs").with_hint("unused")],
+    );
+    let report = Report::build(results, None, None, Privilege::User);
+    assert_eq!(find(&report, "l3_cat").hints, vec![hint.to_string()]);
+    assert!(find(&report, "smt").hints.is_empty());
+
+    let text = report.render_text(amd_features::report::TextOptions {
+        color: false,
+        verbose: false,
+        hide_absent: true,
+    });
+    assert!(text.contains("Suggested fixes"));
+    assert_eq!(text.matches(hint).count(), 1);
+    assert!(text.contains("for: L3 Cache Allocation, Memory Bandwidth Allocation"));
+    assert!(!text.contains("unused"));
+}
+
 #[test]
 fn text_output_includes_purpose_column() {
     let mut results = HashMap::new();

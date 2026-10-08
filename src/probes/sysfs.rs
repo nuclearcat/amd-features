@@ -4,9 +4,11 @@ use std::io;
 use std::path::Path;
 
 use crate::model::Status;
-use crate::probes::{finding_detail, Context, Findings, Probe, ProbeResult};
+use crate::probes::{finding_detail, hinted, Context, Findings, Probe, ProbeResult};
 
 const SRC: &str = "linux-sysfs";
+const RESCTRL_HINT: &str = "mount it: sudo mount -t resctrl resctrl /sys/fs/resctrl \
+     (persist via /etc/fstab: resctrl /sys/fs/resctrl resctrl defaults 0 0)";
 const FEATURES: &[&str] = &[
     "smt",
     "kvm",
@@ -78,15 +80,33 @@ fn detect_smt(ctx: &Context, out: &mut Findings) {
         Ok(v) => (Status::Unknown, format!("malformed smt/active={v:?}")),
         Err(e) => (Status::Unknown, format!("cannot inspect smt/active: {e}")),
     };
-    out.push(finding_detail(SRC, "smt", status, detail));
+    let finding = finding_detail(SRC, "smt", status, detail);
+    if status != Status::Disabled {
+        out.push(finding);
+        return;
+    }
+    let hint = match read_trim(ctx, "/sys/devices/system/cpu/smt/control").as_deref() {
+        Ok("off") => {
+            "turn it on: echo on | sudo tee /sys/devices/system/cpu/smt/control \
+                      (and drop 'nosmt' from the kernel command line)"
+        }
+        Ok("forceoff") => "remove 'nosmt=force' from the kernel command line and reboot",
+        Ok("notsupported" | "notimplemented") => {
+            "enable SMT in firmware setup (often under AMD CBS > CPU Common Options)"
+        }
+        _ => "check the 'nosmt' kernel parameter and the SMT option in firmware setup",
+    };
+    out.push(hinted(finding, hint));
 }
 
 fn detect_kvm(ctx: &Context, out: &mut Findings) {
     let path = Path::new("/dev/kvm");
     let det = match ctx.reader.metadata(path) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            finding_detail(SRC, "kvm", Status::Absent, "/dev/kvm absent")
-        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => hinted(
+            finding_detail(SRC, "kvm", Status::Absent, "/dev/kvm absent"),
+            "load the module: sudo modprobe kvm_amd; if that fails, \
+             enable SVM Mode in firmware setup",
+        ),
         Err(e) => finding_detail(
             SRC,
             "kvm",
@@ -95,11 +115,14 @@ fn detect_kvm(ctx: &Context, out: &mut Findings) {
         ),
         Ok(_) => match ctx.reader.open_device(path, true) {
             Ok(()) => finding_detail(SRC, "kvm", Status::Enabled, "/dev/kvm openable"),
-            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => finding_detail(
-                SRC,
-                "kvm",
-                Status::Present,
-                "/dev/kvm present but not permitted",
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => hinted(
+                finding_detail(
+                    SRC,
+                    "kvm",
+                    Status::Present,
+                    "/dev/kvm present but not permitted",
+                ),
+                "join the kvm group: sudo usermod -aG kvm $USER, then log in again",
             ),
             Err(e) => finding_detail(
                 SRC,
@@ -124,7 +147,15 @@ fn detect_tpm(ctx: &Context, out: &mut Findings) {
             "cannot fully inspect TPM interfaces".to_string(),
         )
     };
-    out.push(finding_detail(SRC, "tpm", status, detail));
+    let finding = finding_detail(SRC, "tpm", status, detail);
+    out.push(if status == Status::Absent {
+        hinted(
+            finding,
+            "enable the AMD fTPM (or a discrete TPM) in firmware setup",
+        )
+    } else {
+        finding
+    });
 }
 
 fn detect_pstate(ctx: &Context, out: &mut Findings) {
@@ -137,16 +168,15 @@ fn detect_pstate(ctx: &Context, out: &mut Findings) {
                 || format!("driver={driver}"),
                 |g| format!("driver={driver}, governor={g}"),
             );
-            out.push(finding_detail(
-                SRC,
-                "amd_pstate",
-                if driver.starts_with("amd-pstate") || driver == "amd_pstate" {
-                    Status::Enabled
-                } else {
-                    Status::Absent
-                },
-                detail,
-            ));
+            if driver.starts_with("amd-pstate") || driver == "amd_pstate" {
+                out.push(finding_detail(SRC, "amd_pstate", Status::Enabled, detail));
+            } else {
+                out.push(hinted(
+                    finding_detail(SRC, "amd_pstate", Status::Absent, detail),
+                    "boot with amd_pstate=active (or guided/passive); \
+                     CPPC must be enabled in firmware setup",
+                ));
+            }
         }
         Err(e) => out.push(finding_detail(
             SRC,
@@ -163,11 +193,9 @@ fn detect_pstate(ctx: &Context, out: &mut Findings) {
             Status::Enabled,
             "cpufreq/boost=1",
         )),
-        Ok(v) if v == "0" => out.push(finding_detail(
-            SRC,
-            "cpb",
-            Status::Disabled,
-            "cpufreq/boost=0",
+        Ok(v) if v == "0" => out.push(hinted(
+            finding_detail(SRC, "cpb", Status::Disabled, "cpufreq/boost=0"),
+            "turn it on: echo 1 | sudo tee /sys/devices/system/cpu/cpufreq/boost",
         )),
         Ok(v) => out.push(finding_detail(
             SRC,
@@ -305,20 +333,42 @@ fn detect_hwmon(ctx: &Context, out: &mut Findings) {
     } else {
         (Status::Unknown, "hwmon enumeration incomplete".to_string())
     };
-    out.push(finding_detail(SRC, "hwmon", status, detail));
+    let finding = finding_detail(SRC, "hwmon", status, detail);
+    out.push(if status == Status::Absent {
+        hinted(finding, "load the sensor driver: sudo modprobe k10temp")
+    } else {
+        finding
+    });
 }
 
 fn detect_resctrl(ctx: &Context, out: &mut Findings) {
     let info = path_state(ctx, "/sys/fs/resctrl/info");
     let root = path_state(ctx, "/sys/fs/resctrl");
-    let root_present = matches!(root, Ok(true));
-    let (status, detail) = match (info, &root) {
-        (Ok(true), _) => (Status::Enabled, "mounted at /sys/fs/resctrl"),
-        (Ok(false), Ok(true)) => (Status::Present, "present but not mounted"),
-        (Ok(false), Ok(false)) => (Status::Absent, "no /sys/fs/resctrl"),
+    // An empty /sys/fs/resctrl only means nobody mounted it; /proc/filesystems tells
+    // whether the kernel actually has resctrl support.
+    let kernel_fs = read_trim(ctx, "/proc/filesystems").ok().map(|text| {
+        text.lines()
+            .any(|line| line.split_whitespace().last() == Some("resctrl"))
+    });
+    let mounted = matches!(info, Ok(true));
+    let (status, detail) = match (info, &root, kernel_fs) {
+        (Ok(true), _, _) => (Status::Enabled, "mounted at /sys/fs/resctrl"),
+        (Ok(false), _, Some(true)) => (
+            Status::Present,
+            "kernel supports resctrl but it is not mounted \
+             (mount -t resctrl resctrl /sys/fs/resctrl)",
+        ),
+        (Ok(false), Ok(true), _) => (Status::Present, "present but not mounted"),
+        (Ok(false), Ok(false), _) => (Status::Absent, "no /sys/fs/resctrl"),
         _ => (Status::Unknown, "cannot inspect resctrl"),
     };
-    out.push(finding_detail(SRC, "resctrl", status, detail));
+    let unmounted = kernel_fs == Some(true) && !mounted;
+    let finding = finding_detail(SRC, "resctrl", status, detail);
+    out.push(if unmounted {
+        hinted(finding, RESCTRL_HINT)
+    } else {
+        finding
+    });
     for (id, path) in [
         ("l3_cat", "/sys/fs/resctrl/info/L3"),
         ("l3_monitoring", "/sys/fs/resctrl/info/L3_MON"),
@@ -326,11 +376,21 @@ fn detect_resctrl(ctx: &Context, out: &mut Findings) {
     ] {
         let (status, detail) = match path_state(ctx, path) {
             Ok(true) => (Status::Enabled, format!("{path} available")),
-            Ok(false) if root_present => (Status::Absent, format!("{path} absent")),
-            Ok(false) => (Status::Unknown, "resctrl is not mounted".to_string()),
+            Ok(false) if mounted => (Status::Absent, format!("{path} absent")),
+            // Unmounted: the resource directories cannot exist yet, so this says
+            // nothing about support. The /proc/cpuinfo flag carries capability.
+            Ok(false) => (
+                Status::Unknown,
+                "resctrl not mounted; cannot verify kernel enablement".to_string(),
+            ),
             Err(e) => (Status::Unknown, format!("cannot inspect {path}: {e}")),
         };
-        out.push(finding_detail(SRC, id, status, detail));
+        let finding = finding_detail(SRC, id, status, detail);
+        out.push(if unmounted && status == Status::Unknown {
+            hinted(finding, RESCTRL_HINT)
+        } else {
+            finding
+        });
     }
 }
 

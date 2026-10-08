@@ -58,6 +58,9 @@ pub struct FeatureReport {
     /// Severity when an expected/available feature is absent or disabled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attention: Option<Attention>,
+    /// Remediation hints from the probes, deduplicated. Empty once the feature is enabled.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hints: Vec<String>,
     /// Render the winning detection's detail inline instead of the probe names.
     #[serde(skip)]
     pub inline_detail: bool,
@@ -142,6 +145,14 @@ impl Report {
                 }
                 let expectation = expectations::for_feature(identity.as_ref(), def.id);
                 let attention = expectation.and_then(|value| value.attention(status));
+                let mut hints: Vec<String> = Vec::new();
+                if status != Status::Enabled {
+                    for hint in detections.iter().filter_map(|d| d.hint.as_ref()) {
+                        if !hints.contains(hint) {
+                            hints.push(hint.clone());
+                        }
+                    }
+                }
                 features.push(FeatureReport {
                     id: def.id,
                     name: def.name,
@@ -151,6 +162,7 @@ impl Report {
                     detections,
                     expectation,
                     attention,
+                    hints,
                     inline_detail: def.inline_detail,
                 });
             }
@@ -182,15 +194,7 @@ impl Report {
             let visible: Vec<&FeatureReport> = cat
                 .features
                 .iter()
-                .filter(|f| {
-                    if !opts.hide_absent || cat.category == Category::Sdci {
-                        return true;
-                    }
-                    // Highlighted absent features remain visible: hiding the exact
-                    // warning the expectation profile produced would be surprising.
-                    (f.status != Status::Absent || f.attention.is_some())
-                        && !f.detections.is_empty()
-                })
+                .filter(|f| is_visible(cat, f, opts))
                 .collect();
             if visible.is_empty() {
                 continue;
@@ -207,6 +211,7 @@ impl Report {
             }
         }
         self.render_attention_legend(&mut s, opts);
+        self.render_hints(&mut s, opts);
         if !self.notes.is_empty() {
             s.push('\n');
             s.push_str(&bold("Notes", opts.color));
@@ -216,6 +221,35 @@ impl Report {
             }
         }
         s
+    }
+
+    /// Group identical hints so one fix (e.g. "run as root") is listed once with every
+    /// visible feature it would help.
+    fn render_hints(&self, s: &mut String, opts: TextOptions) {
+        let mut groups: Vec<(&str, Vec<&str>)> = Vec::new();
+        for cat in &self.categories {
+            for f in cat.features.iter().filter(|f| is_visible(cat, f, opts)) {
+                for hint in &f.hints {
+                    match groups.iter_mut().find(|(h, _)| h == hint) {
+                        Some((_, names)) => names.push(f.name),
+                        None => groups.push((hint, vec![f.name])),
+                    }
+                }
+            }
+        }
+        if groups.is_empty() {
+            return;
+        }
+        s.push('\n');
+        s.push_str(&bold("Suggested fixes", opts.color));
+        s.push('\n');
+        for (hint, names) in groups {
+            s.push_str(&format!("  {} {}\n", colorize("→", "36", opts.color), hint));
+            s.push_str(&dim(
+                &format!("      for: {}\n", names.join(", ")),
+                opts.color,
+            ));
+        }
     }
 
     fn render_attention_legend(&self, s: &mut String, opts: TextOptions) {
@@ -333,6 +367,15 @@ impl fmt::Display for ReportError {
 
 impl std::error::Error for ReportError {}
 
+fn is_visible(cat: &CategoryReport, f: &FeatureReport, opts: TextOptions) -> bool {
+    if !opts.hide_absent || cat.category == Category::Sdci {
+        return true;
+    }
+    // Highlighted absent features remain visible: hiding the exact
+    // warning the expectation profile produced would be surprising.
+    (f.status != Status::Absent || f.attention.is_some()) && !f.detections.is_empty()
+}
+
 fn render_feature(s: &mut String, f: &FeatureReport, opts: TextOptions) {
     let color = f
         .attention
@@ -399,6 +442,9 @@ fn render_feature(s: &mut String, f: &FeatureReport, opts: TextOptions) {
                 &format!("      └ {}: {} {}\n", d.source, d.status.label(), detail),
                 opts.color,
             ));
+            if let Some(hint) = d.hint.as_ref().filter(|_| f.status != Status::Enabled) {
+                s.push_str(&colorize(&format!("        → {hint}\n"), "36", opts.color));
+            }
         }
     }
 }

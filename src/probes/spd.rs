@@ -8,7 +8,7 @@ use std::path::Path;
 
 use crate::model::Status;
 use crate::probes::firmware;
-use crate::probes::{finding_detail, Context, Findings};
+use crate::probes::{finding_detail, hinted, Context, Findings};
 
 const SRC: &str = "linux-sysfs";
 pub(crate) const FEATURES: &[&str] = &["memory_xmp"];
@@ -37,15 +37,22 @@ fn memory_xmp(ctx: &Context) -> (&'static str, crate::model::Detection) {
         }
     };
     if dumps.is_empty() {
-        return finding_detail(
-            SRC,
-            "memory_xmp",
-            Status::Unknown,
-            if complete {
-                "no SPD EEPROM sysfs nodes (ee1004/spd5118 not bound)"
-            } else {
-                "SPD EEPROM enumeration incomplete"
-            },
+        if !complete {
+            return finding_detail(
+                SRC,
+                "memory_xmp",
+                Status::Unknown,
+                "SPD EEPROM enumeration incomplete",
+            );
+        }
+        return hinted(
+            finding_detail(
+                SRC,
+                "memory_xmp",
+                Status::Unknown,
+                "no SPD EEPROM sysfs nodes (ee1004/spd5118 not bound)",
+            ),
+            "load the SPD driver: sudo modprobe spd5118 (DDR5) or sudo modprobe ee1004 (DDR4)",
         );
     }
 

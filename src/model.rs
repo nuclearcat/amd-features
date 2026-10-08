@@ -82,6 +82,9 @@ pub struct Detection {
     /// Optional human note: how it was found, or why it is unknown.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// Optional remediation: what the user can do to enable or fully inspect this.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 impl Detection {
@@ -90,6 +93,7 @@ impl Detection {
             status,
             source,
             detail: None,
+            hint: None,
         }
     }
 
@@ -98,7 +102,13 @@ impl Detection {
             status,
             source,
             detail: Some(detail.into()),
+            hint: None,
         }
+    }
+
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
     }
 }
 

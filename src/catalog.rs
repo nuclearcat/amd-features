@@ -160,9 +160,9 @@ pub const FEATURES: &[FeatureDef] = &[
     k("perfctr_core", "Core Performance Counters", Perf, "AMD core performance counters", "perfctr_core"),
     k("perfctr_nb", "Northbridge Performance Counters", Perf, "AMD data-fabric counters", "perfctr_nb"),
     k("perfmon_v2", "PerfMon v2", Perf, "AMD extended performance-monitoring interface", "perfmon_v2"),
-    n("l3_cat", "L3 Cache Allocation", Rdt, "AMD Platform QoS cache allocation"),
-    n("l3_monitoring", "L3 Monitoring", Rdt, "AMD Platform QoS cache monitoring"),
-    n("mba", "Memory Bandwidth Allocation", Rdt, "AMD Platform QoS bandwidth control"),
+    k("l3_cat", "L3 Cache Allocation", Rdt, "AMD Platform QoS cache allocation", "cat_l3"),
+    k("l3_monitoring", "L3 Monitoring", Rdt, "AMD Platform QoS cache monitoring", "cqm_llc"),
+    k("mba", "Memory Bandwidth Allocation", Rdt, "AMD Platform QoS bandwidth control", "mba"),
     n("resctrl", "resctrl", Rdt, "Linux resource-control filesystem"),
 
     // SDCI components are deliberately not collapsed into a support boolean.

@@ -646,6 +646,13 @@ fn feature_card(ui: &mut Ui, feature: &FeatureReport) {
                     );
                 }
             }
+            for hint in &feature.hints {
+                ui.label(
+                    RichText::new(format!("→ How to fix: {hint}"))
+                        .size(12.0)
+                        .color(ACCENT),
+                );
+            }
             egui::CollapsingHeader::new(format!(
                 "Probe evidence · {} sources",
                 feature.detections.len()

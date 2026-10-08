@@ -152,6 +152,17 @@ Unknown results are not treated as missing. The JSON report exposes separate
 `expectation` and `attention` fields so automation can distinguish measured state from
 the class-based assessment.
 
+## Suggested fixes
+
+When a probe can tell *why* a feature is not usable and the cause is fixable locally,
+for example resctrl not mounted, the `msr` driver not loaded, CPU boost or SMT turned
+off, or missing group membership for `/dev/kvm` or `/dev/kfd`, it attaches a hint. The text
+report lists each distinct hint once under **Suggested fixes**, together with the
+features it affects. `--verbose` also shows each hint under the probe that produced it.
+The GUI shows hints on the feature card, and JSON exposes them as `hint` on each
+detection and `hints` on each feature. Hints are dropped once a feature is enabled. The
+tool only suggests commands; it never runs them.
+
 ## Build and run
 
 ```sh

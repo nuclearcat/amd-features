@@ -1043,3 +1043,53 @@ fn sdci_kernel_checks_configuration_and_exact_boot_option() {
         assert_eq!(status(&f, "sdci_kernel"), expected);
     }
 }
+
+#[test]
+fn unmounted_resctrl_is_not_reported_absent() {
+    let reader = MemoryReader::default().dir("/sys/fs/resctrl", &[]).file(
+        "/proc/filesystems",
+        "nodev\tsysfs\nnodev\tresctrl\n\text4\n",
+    );
+    let findings = SysfsProbe.detect(&context(reader)).unwrap();
+    assert_eq!(status(&findings, "resctrl"), Status::Present);
+    for id in ["resctrl", "l3_cat", "l3_monitoring", "mba"] {
+        let detection = &findings.iter().find(|(found, _)| *found == id).unwrap().1;
+        assert!(
+            detection
+                .hint
+                .as_deref()
+                .is_some_and(|h| h.contains("mount -t resctrl")),
+            "{id}"
+        );
+    }
+    for id in ["l3_cat", "l3_monitoring", "mba"] {
+        assert_eq!(status(&findings, id), Status::Unknown, "{id}");
+    }
+}
+
+#[test]
+fn mounted_resctrl_reports_missing_resources_absent() {
+    let reader = MemoryReader::default()
+        .dir("/sys/fs/resctrl", &["info"])
+        .dir("/sys/fs/resctrl/info", &["L3"])
+        .dir("/sys/fs/resctrl/info/L3", &[]);
+    let findings = SysfsProbe.detect(&context(reader)).unwrap();
+    assert_eq!(status(&findings, "resctrl"), Status::Enabled);
+    assert_eq!(status(&findings, "l3_cat"), Status::Enabled);
+    assert_eq!(status(&findings, "mba"), Status::Absent);
+    assert!(!findings
+        .iter()
+        .any(|(_, d)| d.hint.as_deref().is_some_and(|h| h.contains("resctrl"))));
+}
+
+#[test]
+fn procfs_reports_pqos_flags() {
+    let reader = MemoryReader::default().file(
+        "/proc/cpuinfo",
+        "processor\t: 0\nflags\t\t: fpu cat_l3 cqm_llc mba\n\n",
+    );
+    let findings = ProcfsProbe.detect(&context(reader)).unwrap();
+    for id in ["l3_cat", "l3_monitoring", "mba"] {
+        assert_eq!(status(&findings, id), Status::Present, "{id}");
+    }
+}

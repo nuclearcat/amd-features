@@ -42,7 +42,15 @@ impl Probe for MsrProbe {
         let mut out = Vec::new();
         match acquire(ctx) {
             Ok(detail) => out.push(("msr", Detection::with_detail(Status::Enabled, SRC, detail))),
-            Err(reason) => return Ok(unavailable(SRC, FEATURES, reason)),
+            Err((reason, hint)) => {
+                let mut out = unavailable(SRC, FEATURES, reason);
+                if let Some(hint) = hint {
+                    for (_, detection) in &mut out {
+                        detection.hint = Some(hint.into());
+                    }
+                }
+                return Ok(out);
+            }
         }
         if !is_amd_cpu() {
             return Ok(unavailable(
@@ -68,35 +76,48 @@ impl Probe for MsrProbe {
     }
 }
 
-fn acquire(ctx: &Context) -> Result<String, String> {
+/// On failure returns the reason and, when the user can do something about it, a hint.
+fn acquire(ctx: &Context) -> Result<String, (String, Option<&'static str>)> {
+    const ROOT_HINT: &str = "rerun as root (sudo) to read AMD MSRs";
+    const LOAD_HINT: &str =
+        "load the msr driver: sudo modprobe msr (or rerun as root with --load-msr-module)";
     let path = Path::new("/dev/cpu/0/msr");
     match ctx.reader.open_device(path, false) {
         Ok(()) => return Ok("/dev/cpu/0/msr readable".into()),
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
-            return Err("requires permission to read /dev/cpu/0/msr".into())
+            return Err((
+                "requires permission to read /dev/cpu/0/msr".into(),
+                Some(ROOT_HINT),
+            ))
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             if !ctx.options.load_msr_module {
-                return Err(
+                return Err((
                     "no /dev/cpu/0/msr (use --load-msr-module to opt in to modprobe)".into(),
-                );
+                    Some(LOAD_HINT),
+                ));
             }
             if !ctx.is_root() {
-                return Err("--load-msr-module requires root".into());
+                return Err(("--load-msr-module requires root".into(), Some(ROOT_HINT)));
             }
         }
-        Err(error) => return Err(format!("open failed: {:?}", error.kind())),
+        Err(error) => return Err((format!("open failed: {:?}", error.kind()), None)),
     }
     if !ctx.try_mark_module_load() {
-        return Err("msr module load was already attempted".into());
+        return Err(("msr module load was already attempted".into(), None));
     }
     ctx.msr
         .load_module()
-        .map_err(|reason| format!("modprobe msr failed: {reason}"))?;
+        .map_err(|reason| (format!("modprobe msr failed: {reason}"), None))?;
     ctx.reader
         .open_device(path, false)
         .map(|_| "readable (loaded msr module by explicit request)".into())
-        .map_err(|error| format!("msr module loaded but open failed: {:?}", error.kind()))
+        .map_err(|error| {
+            (
+                format!("msr module loaded but open failed: {:?}", error.kind()),
+                None,
+            )
+        })
 }
 
 fn read(msr: &dyn MsrAccess, register: u32) -> io::Result<u64> {

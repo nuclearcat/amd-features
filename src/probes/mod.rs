@@ -217,6 +217,14 @@ pub fn finding_detail(
     (id, Detection::with_detail(status, source, detail))
 }
 
+/// Attach a remediation hint to a finding.
+pub fn hinted(
+    (id, detection): (&'static str, Detection),
+    hint: impl Into<String>,
+) -> (&'static str, Detection) {
+    (id, detection.with_hint(hint))
+}
+
 pub fn unavailable(
     source: &'static str,
     ids: &[&'static str],

@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::model::{Detection, Status};
-use crate::probes::{finding_detail, Context, Findings};
+use crate::probes::{finding_detail, hinted, Context, Findings};
 
 const SRC: &str = "pci";
 const ATI: u16 = 0x1002;
@@ -465,23 +465,32 @@ fn vcn_finding(ctx: &Context, gpus: &[GpuView], complete: bool) -> (&'static str
     }
     let debugfs = Path::new("/sys/kernel/debug/dri");
     match ctx.reader.metadata(debugfs) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => finding_detail(
-            SRC,
-            "vcn",
-            Status::Unknown,
-            "no debugfs DRI interface to inspect VCN/UVD firmware",
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => hinted(
+            finding_detail(
+                SRC,
+                "vcn",
+                Status::Unknown,
+                "no debugfs DRI interface to inspect VCN/UVD firmware",
+            ),
+            "mount debugfs and rerun as root: sudo mount -t debugfs none /sys/kernel/debug",
         ),
-        Err(_) => finding_detail(
-            SRC,
-            "vcn",
-            Status::Unknown,
-            "cannot inspect debugfs DRI for VCN/UVD firmware",
+        Err(_) => hinted(
+            finding_detail(
+                SRC,
+                "vcn",
+                Status::Unknown,
+                "cannot inspect debugfs DRI for VCN/UVD firmware",
+            ),
+            "rerun as root (sudo) to read debugfs",
         ),
-        Ok(_) => finding_detail(
-            SRC,
-            "vcn",
-            Status::Unknown,
-            "AMD GPU present but VCN/UVD firmware files were not readable",
+        Ok(_) => hinted(
+            finding_detail(
+                SRC,
+                "vcn",
+                Status::Unknown,
+                "AMD GPU present but VCN/UVD firmware files were not readable",
+            ),
+            "rerun as root (sudo) to read debugfs",
         ),
     }
 }
@@ -528,7 +537,15 @@ fn rocm_finding(ctx: &Context, kfd: &[KfdNode], scanned_gpus: bool) -> (&'static
                     .collect();
                 detail.push_str(&format!("; {}", nodes.join(", ")));
             }
-            finding_detail(SRC, "rocm", open.1, detail)
+            let finding = finding_detail(SRC, "rocm", open.1, detail);
+            if open.0 == "present but not permitted" {
+                hinted(
+                    finding,
+                    "join the render group: sudo usermod -aG render,video $USER, then log in again",
+                )
+            } else {
+                finding
+            }
         }
     }
 }
